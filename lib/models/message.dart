@@ -16,6 +16,11 @@ class Message {
   final String type;
   final String? caption;
   final String? status;
+  // Reply fields
+  final String? replyToId;
+  final String? replyToMessage;
+  final String? replyToSender;
+  final String? replyToType;
 
   Message({
     required this.senderID,
@@ -27,6 +32,10 @@ class Message {
     this.type = 'text',
     this.caption,
     this.status = MessageStatus.sent,
+    this.replyToId,
+    this.replyToMessage,
+    this.replyToSender,
+    this.replyToType,
   });
 
   // conver to map
@@ -42,6 +51,10 @@ class Message {
       'type': type,
       'caption': caption,
       'status': status,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToMessage != null) 'replyToMessage': replyToMessage,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (replyToType != null) 'replyToType': replyToType,
     };
   }
 }

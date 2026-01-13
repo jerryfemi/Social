@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:social/providers/auth_provider.dart';
 import 'package:social/providers/chat_provider.dart';
@@ -134,16 +135,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 child: isUploadingImage
                     ? const CircularProgressIndicator()
                     : _currentPhotoUrl != null && _currentPhotoUrl!.isNotEmpty
-                    ? ClipOval(
-                        child: CachedNetworkImage(
-                          imageUrl: _currentPhotoUrl!,
-                          width: 100,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) =>
-                              const Icon(Icons.person, size: 40),
-                          errorWidget: (context, url, error) =>
-                              const Icon(Icons.person, size: 40),
+                    ? GestureDetector(
+                        onTap: () => context.push(
+                          '/viewImage',
+                          extra: {'photoUrl': _currentPhotoUrl, 'isProfile': true},
+                        ),
+                        child: ClipOval(
+                          child: Hero(
+                            tag: 'pfp',
+                            child: CachedNetworkImage(
+                              imageUrl: _currentPhotoUrl!,
+                              width: 100,
+                              height: 100,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) =>
+                                  const Icon(Icons.person, size: 40),
+                              errorWidget: (context, url, error) =>
+                                  const Icon(Icons.person, size: 40),
+                            ),
+                          ),
                         ),
                       )
                     : const Icon(Icons.person, size: 40),

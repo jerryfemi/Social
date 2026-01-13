@@ -74,17 +74,26 @@ class ChatProfileScreen extends ConsumerWidget {
               children: [
                 ClipOval(
                   child: photoUrl != null && photoUrl!.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: photoUrl!,
-                          height: 120,
-                          width: 120,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) =>
-                              const CircularProgressIndicator(),
-                          errorWidget: (context, url, error) => Icon(
-                            Icons.person,
-                            size: 50,
-                            color: Theme.of(context).colorScheme.tertiary,
+                      ? GestureDetector(
+                          onTap: () => context.push(
+                            '/viewImage',
+                            extra: {'photoUrl': photoUrl, 'isProfile': true},
+                          ),
+                          child: Hero(
+                            tag: 'pfp',
+                            child: CachedNetworkImage(
+                              imageUrl: photoUrl!,
+                              height: 120,
+                              width: 120,
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) =>
+                                  const CircularProgressIndicator(),
+                              errorWidget: (context, url, error) => Icon(
+                                Icons.person,
+                                size: 50,
+                                color: Theme.of(context).colorScheme.tertiary,
+                              ),
+                            ),
                           ),
                         )
                       : CircleAvatar(

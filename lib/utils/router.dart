@@ -19,9 +19,13 @@ import 'package:social/screens/video_player_screen.dart';
 import 'package:social/screens/view_image_screen.dart';
 import 'package:social/widgets/my_bottom_nav_bar.dart';
 
+// Global navigator key for accessing navigation outside of Riverpod
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 // This is the KEY: use StateProvider to hold the router reference
 final routerProvider = Provider<GoRouter>((ref) {
   final router = GoRouter(
+    navigatorKey: navigatorKey,
     initialLocation: '/login',
     routes: [
       GoRoute(path: '/', redirect: (context, state) => '/login'),
@@ -101,10 +105,17 @@ final routerProvider = Provider<GoRouter>((ref) {
           );
         },
       ),
-      GoRoute(path: '/viewImage',builder: (context, state) {
-        final data = state.extra as Map<String,dynamic>;
-        return ViewImageScreen(imageUrl: data['photoUrl'],caption: data['caption'],);
-      },),
+      GoRoute(
+        path: '/viewImage',
+        builder: (context, state) {
+          final data = state.extra as Map<String, dynamic>;
+          return ViewImageScreen(
+            imageUrl: data['photoUrl'],
+            caption: data['caption'],
+            isProfile: data['isProfile'] ?? false,
+          );
+        },
+      ),
 
       // SHELL ROUTE
       ShellRoute(

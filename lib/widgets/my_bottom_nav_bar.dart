@@ -15,13 +15,14 @@ class MyBottomNavBar extends StatelessWidget {
 
     return SafeArea(
       child: GNav(
+        iconSize: 30,
         haptic: true,
         mainAxisAlignment: MainAxisAlignment.center,
         color: Theme.of(context).colorScheme.tertiary,
         activeColor: Theme.of(context).colorScheme.primary,
         padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        gap: 1,
-        textStyle: TextStyle(fontFamily: 'Times New Roman', fontSize: 16),
+        gap: 4,
+        textStyle: TextStyle(fontSize: 18),
         onTabChange: (index) {
           switch (index) {
             case 0:

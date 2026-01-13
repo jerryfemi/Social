@@ -7,7 +7,7 @@ import 'package:social/providers/chat_provider.dart';
 import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
 
-class ChatBubble extends ConsumerWidget {
+class ChatBubble extends ConsumerStatefulWidget {
   const ChatBubble({
     super.key,
     required this.alignment,
@@ -19,6 +19,7 @@ class ChatBubble extends ConsumerWidget {
     required this.senderName,
     required this.receiverId,
     this.isStarred = false,
+    this.onReply,
   });
 
   final Alignment alignment;
@@ -30,6 +31,70 @@ class ChatBubble extends ConsumerWidget {
   final String senderName;
   final String receiverId;
   final bool isStarred;
+  final void Function()? onReply;
+
+  @override
+  ConsumerState<ChatBubble> createState() => _ChatBubbleState();
+}
+
+class _ChatBubbleState extends ConsumerState<ChatBubble>
+    with SingleTickerProviderStateMixin {
+  double _dragOffset = 0;
+  late AnimationController _animationController;
+  late Animation<double> _animation;
+
+  // Swipe threshold to trigger reply
+  static const double _swipeThreshold = 35;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _animation = Tween<double>(begin: 0, end: 0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      // For sender (right side): swipe left (negative)
+      // For receiver (left side): swipe right (positive)
+      if (widget.isSender) {
+        _dragOffset += details.delta.dx;
+        _dragOffset = _dragOffset.clamp(-60.0, 0.0);
+      } else {
+        _dragOffset += details.delta.dx;
+        _dragOffset = _dragOffset.clamp(0.0, 60.0);
+      }
+    });
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    final shouldTriggerReply = widget.isSender
+        ? _dragOffset < -_swipeThreshold
+        : _dragOffset > _swipeThreshold;
+
+    if (shouldTriggerReply) {
+      widget.onReply?.call();
+    }
+
+    // Animate back to original position
+    _animation = Tween<double>(begin: _dragOffset, end: 0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
+    _animationController.forward(from: 0).then((_) {
+      setState(() => _dragOffset = 0);
+    });
+  }
 
   // show options
   void showOptions(
@@ -47,19 +112,23 @@ class ChatBubble extends ConsumerWidget {
             // star message
             ListTile(
               leading: Icon(
-                isStarred ? Icons.star : Icons.star_border,
-                color: isStarred ? Colors.orange : null,
+                widget.isStarred ? Icons.star : Icons.star_border,
+                color: widget.isStarred ? Colors.orange : null,
               ),
-              title: Text(isStarred ? 'Unstar' : 'Star'),
+              title: Text(widget.isStarred ? 'Unstar' : 'Star'),
               onTap: () {
                 context.pop();
                 ref
                     .read(chatServiceProvider)
-                    .toggleStarMessage(data, messageId, receiverId);
+                    .toggleStarMessage(
+                      widget.data,
+                      messageId,
+                      widget.receiverId,
+                    );
               },
             ),
             // report message
-            if (!isSender)
+            if (!widget.isSender)
               ListTile(
                 leading: Icon(Icons.flag),
                 title: Text('report'),
@@ -145,65 +214,188 @@ class ChatBubble extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    bool isImage = data['type'] == 'image';
-    bool isVideo = data['type'] == 'video';
+  Widget build(BuildContext context) {
+    bool isImage = widget.data['type'] == 'image';
+    bool isVideo = widget.data['type'] == 'video';
     bool isMedia = isImage || isVideo;
-    final String? caption = data['caption'];
-    final textTime = DateUtil.getFormattedTime(data['timestamp']);
+    final String? caption = widget.data['caption'];
+    final textTime = DateUtil.getFormattedTime(widget.data['timestamp']);
 
-    return GestureDetector(
-      onLongPress: () {
-        showOptions(context, ref, messageId, userId, receiverId);
-      },
-      child: Container(
-        alignment: alignment,
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            crossAxisAlignment: isSender
-                ? CrossAxisAlignment.end
-                : CrossAxisAlignment.start,
-            children: [
-              // Bubble
-              ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: 250),
+    // Check if there's a reply
+    final hasReply = widget.data['replyToMessage'] != null;
+
+    // Calculate reply icon opacity based on drag distance
+    final replyIconOpacity =
+        (widget.isSender
+                ? (-_dragOffset / _swipeThreshold)
+                : (_dragOffset / _swipeThreshold))
+            .clamp(0.0, 1.0);
+
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        final offset = _animationController.isAnimating
+            ? _animation.value
+            : _dragOffset;
+
+        return Stack(
+          alignment: widget.isSender
+              ? Alignment.centerLeft
+              : Alignment.centerRight,
+          children: [
+            // Reply icon (appears behind the bubble)
+            Opacity(
+              opacity: replyIconOpacity,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: widget.isSender ? 20 : 0,
+                  right: widget.isSender ? 0 : 20,
+                ),
                 child: Container(
-                  padding: isMedia
-                      ? const EdgeInsets.all(4)
-                      : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        bubbleColor.withValues(alpha: 0.9),
-                        Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.8),
-                      ],
-                      begin: Alignment.bottomLeft,
-                      end: Alignment.topRight,
-                    ),
-                    color: bubbleColor,
-                    borderRadius: BorderRadius.circular(12),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      isMedia
-                          ? _buildMediaContent(
-                              context,
-                              isVideo: isVideo,
-                              caption: caption,
-                              textTime: textTime,
-                            )
-                          : _buildTextContent(context, textTime),
-                    ],
+                  child: Icon(
+                    Icons.reply,
+                    color: Theme.of(context).colorScheme.primary,
+                    size: 20,
                   ),
                 ),
               ),
-            ],
+            ),
+
+            // Chat Bubble
+            GestureDetector(
+              onHorizontalDragUpdate: _onHorizontalDragUpdate,
+              onHorizontalDragEnd: _onHorizontalDragEnd,
+              onLongPress: () {
+                showOptions(
+                  context,
+                  ref,
+                  widget.messageId,
+                  widget.userId,
+                  widget.receiverId,
+                );
+              },
+              child: Transform.translate(
+                offset: Offset(offset, 0),
+                child: Container(
+                  alignment: widget.alignment,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: widget.isSender
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      children: [
+                        // Bubble
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: 250),
+                          child: Container(
+                            padding: isMedia
+                                ? const EdgeInsets.all(4)
+                                : const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  widget.bubbleColor.withValues(alpha: 0.9),
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withValues(alpha: 0.8),
+                                ],
+                                begin: Alignment.bottomLeft,
+                                end: Alignment.topRight,
+                              ),
+                              color: widget.bubbleColor,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IntrinsicWidth(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Reply quote if exists
+                                  if (hasReply) _buildReplyQuote(context),
+
+                                  isMedia
+                                      ? _buildMediaContent(
+                                          context,
+                                          isVideo: isVideo,
+                                          caption: caption,
+                                          textTime: textTime,
+                                        )
+                                      : _buildTextContent(context, textTime),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // BUILD REPLY QUOTE (shown inside bubble)
+  Widget _buildReplyQuote(BuildContext context) {
+    final replyToSender = widget.data['replyToSender'] ?? '';
+    final replyToMessage = widget.data['replyToMessage'] ?? '';
+    final replyToType = widget.data['replyToType'] ?? 'text';
+    final isMediaReply = replyToType == 'image' || replyToType == 'video';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: widget.isSender
+                ? Colors.white70
+                : Theme.of(context).colorScheme.primary,
+            width: 2,
           ),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            replyToSender,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: widget.isSender
+                  ? Colors.white
+                  : Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            isMediaReply ? '📷 Photo' : replyToMessage,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: widget.isSender ? Colors.white70 : Colors.black54,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -227,17 +419,24 @@ class ChatBubble extends ConsumerWidget {
               onTap: isVideo
                   ? () => context.push(
                       '/videoPlayer',
-                      extra: {'videoUrl': data['message'], 'caption': caption},
+                      extra: {
+                        'videoUrl': widget.data['message'],
+                        'caption': caption,
+                      },
                     )
                   : () => context.push(
                       '/viewImage',
-                      extra: {'photoUrl': data['message'], 'caption': caption},
+                      extra: {
+                        'photoUrl': widget.data['message'],
+                        'caption': caption,
+                      },
                     ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Hero(tag:  data['message'],
+                child: Hero(
+                  tag: widget.data['message'],
                   child: CachedNetworkImage(
-                    imageUrl: data['message'],
+                    imageUrl: widget.data['message'],
                     height: 300,
                     width: 250,
                     fit: BoxFit.cover,
@@ -282,7 +481,10 @@ class ChatBubble extends ConsumerWidget {
                 child: GestureDetector(
                   onTap: () => context.push(
                     '/videoPlayer',
-                    extra: {'videoUrl': data['message'], 'caption': caption},
+                    extra: {
+                      'videoUrl': widget.data['message'],
+                      'caption': caption,
+                    },
                   ),
                   child: Center(
                     child: Container(
@@ -318,7 +520,7 @@ class ChatBubble extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (isStarred)
+                      if (widget.isStarred)
                         Padding(
                           padding: const EdgeInsets.only(right: 3),
                           child: Icon(
@@ -334,9 +536,9 @@ class ChatBubble extends ConsumerWidget {
                           color: Colors.white,
                         ),
                       ),
-                      if (isSender) ...[
+                      if (widget.isSender) ...[
                         const SizedBox(width: 3),
-                        StatusIcon(status: data['status'] ?? 'read'),
+                        StatusIcon(status: widget.data['status'] ?? 'read'),
                       ],
                     ],
                   ),
@@ -356,7 +558,7 @@ class ChatBubble extends ConsumerWidget {
                     text: caption,
                     style: TextStyle(
                       fontSize: 14,
-                      color: isSender ? Colors.white : Colors.black,
+                      color: widget.isSender ? Colors.white : Colors.black,
                     ),
                     children: [const WidgetSpan(child: SizedBox(width: 75))],
                   ),
@@ -367,7 +569,7 @@ class ChatBubble extends ConsumerWidget {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (isStarred)
+                      if (widget.isStarred)
                         Padding(
                           padding: const EdgeInsets.only(right: 4),
                           child: Icon(
@@ -380,9 +582,9 @@ class ChatBubble extends ConsumerWidget {
                         textTime,
                         style: TextStyle(fontSize: 10, color: Colors.white60),
                       ),
-                      if (isSender) ...[
+                      if (widget.isSender) ...[
                         SizedBox(width: 4),
-                        StatusIcon(status: data['status'] ?? 'read'),
+                        StatusIcon(status: widget.data['status'] ?? 'read'),
                       ],
                     ],
                   ),
@@ -400,10 +602,10 @@ class ChatBubble extends ConsumerWidget {
       children: [
         Text.rich(
           TextSpan(
-            text: data['message'],
+            text: widget.data['message'],
             style: TextStyle(
               fontSize: 14,
-              color: isSender ? Colors.white : Colors.black,
+              color: widget.isSender ? Colors.white : Colors.black,
             ),
             children: [const WidgetSpan(child: SizedBox(width: 75))],
           ),
@@ -414,7 +616,7 @@ class ChatBubble extends ConsumerWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (isStarred)
+              if (widget.isStarred)
                 Padding(
                   padding: const EdgeInsets.only(right: 3),
                   child: Icon(Icons.star, size: 12, color: Colors.orange),
@@ -423,9 +625,9 @@ class ChatBubble extends ConsumerWidget {
                 textTime,
                 style: TextStyle(fontSize: 10, color: Colors.white60),
               ),
-              if (isSender) ...[
+              if (widget.isSender) ...[
                 SizedBox(width: 3),
-                StatusIcon(status: data['status'] ?? 'read'),
+                StatusIcon(status: widget.data['status'] ?? 'read'),
               ],
             ],
           ),

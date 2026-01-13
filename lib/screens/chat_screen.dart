@@ -43,6 +43,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _selectedMediaType;
   String? _selectedVideoPath;
 
+  // Reply state
+  Map<String, dynamic>? _replyingTo;
+  String? _replyingToId;
+  String? _replyingToSender;
+
   @override
   void initState() {
     super.initState();
@@ -107,6 +112,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final mediaName = _selectedImageName;
     final isVideo = _selectedMediaType == 'video';
 
+    // Capture reply data before clearing
+    final replyToId = _replyingToId;
+    final replyToMessage = _replyingTo?['message'] as String?;
+    final replyToSender = _replyingToSender;
+    final replyToType = _replyingTo?['type'] as String? ?? 'text';
+
     try {
       if (imageBytes != null) {
         // SEND MEDIA
@@ -118,6 +129,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               imageBytes: isVideo ? null : imageBytes,
               videoPath: isVideo ? videoPath : null,
               caption: text.isNotEmpty ? text : null,
+              replyToId: replyToId,
+              replyToMessage: replyToMessage,
+              replyToSender: replyToSender,
+              replyToType: replyToType,
             )
             .catchError((e) {});
         _clearImage();
@@ -129,17 +144,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               widget.receiverId,
               _messageController.text.trim(),
               MessageStatus.sent,
+              replyToId: replyToId,
+              replyToMessage: replyToMessage,
+              replyToSender: replyToSender,
+              replyToType: replyToType,
             );
       }
 
-      // clear textfield
+      // clear textfield and reply
       _messageController.clear();
+      _clearReply();
 
       // scroll down after sending mesage
       _scrollDown();
     } catch (e) {
       _showSnackBar('Error: $e');
     }
+  }
+
+  // Set reply to message
+  void _setReplyTo(
+    Map<String, dynamic> data,
+    String messageId,
+    String senderName,
+  ) {
+    setState(() {
+      _replyingTo = data;
+      _replyingToId = messageId;
+      _replyingToSender = senderName;
+    });
+    _focusNode.requestFocus();
+  }
+
+  // Clear reply
+  void _clearReply() {
+    setState(() {
+      _replyingTo = null;
+      _replyingToId = null;
+      _replyingToSender = null;
+    });
   }
 
   // show snackbar
@@ -396,16 +439,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     return Padding(
       padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
-      child: messageAsync.when(
-        error: (error, stackTrace) => const Center(child: Text('Error:')),
-        loading: () => _buildSkeletonMessages(),
-        data: (snapShot) {
-          final message = snapShot.docs.reversed.toList();
+      child: Builder(
+        builder: (context) {
+          // Only show skeleton when truly no data (not in cache)
+          if (messageAsync.isLoading && !messageAsync.hasValue) {
+            return _buildSkeletonMessages();
+          }
 
-          // empty state
-          if (message.isEmpty) {
+          final snapshot = messageAsync.value;
+          final error = messageAsync.error;
+
+          if (error != null && !messageAsync.hasValue) {
+            return const Center(child: Text('Error:'));
+          }
+
+          if (snapshot == null || snapshot.docs.isEmpty) {
             return const Center(child: Text('No Messages yet'));
           }
+
+          final message = snapshot.docs.reversed.toList();
 
           // Filter out messages deleted for current user
           final currentUserId = authService.currentUser!.uid;
@@ -438,36 +490,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   // BUILD SKELETON MESSAGES FOR LOADING STATE
   Widget _buildSkeletonMessages() {
-    return ListView.builder(
-      itemCount: 12,
-      itemBuilder: (context, index) {
-        final isSender = index % 2 == 0;
-        return Skeletonizer(
-          enabled: true,
-          child: Container(
+    return Skeletonizer(
+      enabled: true,
+      child: ListView.builder(
+        itemCount: 10,
+        itemBuilder: (context, index) {
+          final isSender = index % 2 == 0;
+          return ChatBubble(
             alignment: isSender ? Alignment.centerRight : Alignment.centerLeft,
-            padding: const EdgeInsets.all(8.0),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: 250),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondary,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  isSender
-                      ? 'Loading message text...'
-                      : 'Loading reply message...',
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+            isSender: isSender,
+            data: {
+              'message': BoneMock.paragraph,
+              'timestamp': Timestamp.now(),
+              'type': 'text',
+              'status': 'read',
+            },
+            bubbleColor: isSender ? Colors.purpleAccent : Colors.grey,
+            messageId: '',
+            userId: '',
+            senderName: '',
+            receiverId: '',
+          );
+        },
+      ),
     );
   }
 
@@ -556,6 +601,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       bubbleColor: bubbleColor,
       receiverId: widget.receiverId,
       isStarred: isStarred,
+      onReply: () => _setReplyTo(data, doc.id, name),
     );
   }
 
@@ -565,13 +611,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.only(
-            top: 10,
-            bottom: 20,
-            left: 15,
-            right: 15,
-          ),
-          decoration: BoxDecoration(),
+          padding: const EdgeInsets.only(bottom: 20, left: 15, right: 15),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -600,37 +640,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         ),
                       ),
                     ),
-              // TEXT FIELD
+
               const SizedBox(width: 10),
               Expanded(
-                child: TextField(
-                  focusNode: _focusNode,
-                  controller: _messageController,
-                  autocorrect: true,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => sendMessage(),
-                  decoration: InputDecoration(
-                    filled: true,
-                    suffixIcon: _sendButton(context, sendMessage),
-
-                    hintText: _selectedImageBytes != null
-                        ? 'Add a caption...'
-                        : null,
-                    isDense: true,
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.secondary,
-                        width: 2,
-                      ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color:
+                        Theme.of(context).inputDecorationTheme.fillColor ??
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.secondary,
+                      width: 2,
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.secondary,
-                        width: 2,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Reply preview
+                      if (_replyingTo != null) _buildReplyPreview(),
+                      // Text field
+                      TextField(
+                        focusNode: _focusNode,
+                        controller: _messageController,
+                        autocorrect: true,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => sendMessage(),
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: Colors.transparent,
+                          suffixIcon: _sendButton(context, sendMessage),
+                          hintText: _selectedImageBytes != null
+                              ? 'Add a caption...'
+                              : null,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          border: InputBorder.none,
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -682,6 +735,73 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // REPLY PREVIEW WIDGET (inside TextField)
+  Widget _buildReplyPreview() {
+    final isMedia =
+        _replyingTo!['type'] == 'image' || _replyingTo!['type'] == 'video';
+    final messageText = isMedia
+        ? (_replyingTo!['caption'] ?? '📷 Photo')
+        : _replyingTo!['message'];
+
+    return Container(
+      margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border(
+          left: BorderSide(
+            color: Theme.of(context).colorScheme.primary,
+            width: 2,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _replyingToSender ?? '',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  messageText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Close button
+          GestureDetector(
+            onTap: _clearReply,
+            child: Icon(
+              Icons.close,
+              size: 18,
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

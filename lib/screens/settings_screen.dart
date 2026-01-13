@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social/providers/auth_provider.dart';
 import 'package:social/providers/chat_provider.dart';
+import 'package:social/providers/theme_provider.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
 import 'package:social/widgets/user_tile.dart';
 
@@ -30,8 +31,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final userId = ref.watch(authServiceProvider).currentUser!.uid;
-    final userProfileAsync = ref.watch(userProfileProvider(userId));
+    final currentUser = ref.watch(authServiceProvider).currentUser;
+    if (currentUser == null) {
+      return const Scaffold(body: Center(child: Text('Not logged in')));
+    }
+    final userProfileAsync = ref.watch(userProfileProvider(currentUser.uid));
+    final themeMode = ref.watch(themeModeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -69,6 +74,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   title: 'Blocked',
                   leading: Icon(Icons.logout),
                   ontap: () => context.push('/blocked'),
+                ),
+                MyTile(
+                  title: 'Dark Mode',
+                  leading: Icon(
+                    themeMode == ThemeMode.dark
+                        ? Icons.dark_mode
+                        : Icons.light_mode,
+                  ),
+                  trailing: Switch(
+                    value: themeMode == ThemeMode.dark,
+                    onChanged: (_) =>
+                        ref.read(themeModeProvider.notifier).toggle(),
+                  ),
                 ),
                 Spacer(),
                 MyTile(
@@ -133,11 +151,11 @@ Widget profileView(BuildContext context, Map<String, dynamic> userData) {
             children: [
               // user name
               Text(
-                userData['username'],
+                userData['username'] ?? 'Unknown',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               // user email
-              Text(userData['email']),
+              Text(userData['email'] ?? ''),
             ],
           ),
         ],

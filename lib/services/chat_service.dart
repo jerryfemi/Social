@@ -109,7 +109,15 @@ class ChatService extends ChangeNotifier {
   }
 
   // send message
-  Future<void> sendMessage(String receiverID, message, String status) async {
+  Future<void> sendMessage(
+    String receiverID,
+    message,
+    String status, {
+    String? replyToId,
+    String? replyToMessage,
+    String? replyToSender,
+    String? replyToType,
+  }) async {
     final String currentUserID = _auth.currentUser!.uid;
     final String currentUserEmail = _auth.currentUser!.email!;
     final Timestamp timestamp = Timestamp.now();
@@ -130,6 +138,10 @@ class ChatService extends ChangeNotifier {
       timestamp: timestamp,
       senderName: username,
       status: status,
+      replyToId: replyToId,
+      replyToMessage: replyToMessage,
+      replyToSender: replyToSender,
+      replyToType: replyToType,
     );
     // construct chat room ID for the two users
     List<String> ids = [currentUserID, receiverID];
@@ -442,6 +454,10 @@ class ChatService extends ChangeNotifier {
     Uint8List? imageBytes,
     String? caption,
     String? videoPath,
+    String? replyToId,
+    String? replyToMessage,
+    String? replyToSender,
+    String? replyToType,
   }) async {
     final String currentuserID = _auth.currentUser!.uid;
     final String currentuserEmail = _auth.currentUser!.email!;
@@ -457,7 +473,6 @@ class ChatService extends ChangeNotifier {
     String notificationText;
 
     if (videoPath != null) {
-
       // upload images to storage
       File videoFile = File(videoPath);
       mediaUrl = await _storageService.uploadChatFile(
@@ -468,7 +483,6 @@ class ChatService extends ChangeNotifier {
       type = 'video';
       notificationText = '🎥 Video';
     } else if (imageBytes != null) {
-
       // upload images to storage
       mediaUrl = await _storageService.uploadChatFile(
         chatRoomID,
@@ -499,6 +513,10 @@ class ChatService extends ChangeNotifier {
       caption: caption,
       timestamp: timestamp,
       type: type,
+      replyToId: replyToId,
+      replyToMessage: replyToMessage,
+      replyToSender: replyToSender,
+      replyToType: replyToType,
     );
 
     // add to firestore

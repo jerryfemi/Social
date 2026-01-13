@@ -95,14 +95,14 @@ class MyTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       margin: EdgeInsets.symmetric(vertical: 3),
-      padding: EdgeInsets.all(15),
+      padding: EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.secondary,
         borderRadius: BorderRadius.circular(12),
         border: BoxBorder.fromLTRB(
           bottom: BorderSide(
             color: Theme.of(context).colorScheme.secondary,
-            width: 3,
+            width: 1.5,
           ),
         ),
       ),

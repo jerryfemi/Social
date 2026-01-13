@@ -5,17 +5,19 @@ import 'package:go_router/go_router.dart';
 class ViewImageScreen extends StatelessWidget {
   final String imageUrl;
   final String? caption;
+  final bool isProfile;
   const ViewImageScreen({
     super.key,
     required this.imageUrl,
-    required this.caption,
+    this.caption,
+    this.isProfile = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Hero(
-        tag: imageUrl,
+        tag: isProfile ? 'pfp' : imageUrl,
         child: Stack(
           children: [
             Positioned.fill(child: CachedNetworkImage(imageUrl: imageUrl)),

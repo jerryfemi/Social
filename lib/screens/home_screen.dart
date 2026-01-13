@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:skeletonizer/src/utils/bone_mock.dart';
 import 'package:social/providers/chat_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/chat_service.dart';
@@ -77,32 +78,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
 
           // CONTENT
-          homeStreamAsync.when(
-            error: (error, stackTrace) =>
-                SliverFillRemaining(child: const Center(child: Text('Error'))),
-            loading: () => Skeletonizer.sliver(
-              enabled: true,
-              child: SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 4,
-                    ),
-                    child: UserTile(
-                      text: 'Loading user name',
-                      photourl: null,
-                      subtitle: Text('Loading message...'),
-                      onTap: null,
-                    ),
-                  );
-                }, childCount: 8),
-              ),
-            ),
-            data: (chats) {
+          // Show cached data immediately, only show skeleton when truly no data
+          Builder(
+            builder: (context) {
+              // Only show skeleton when loading AND no cached data exists
+              if (homeStreamAsync.isLoading && !homeStreamAsync.hasValue) {
+                return Skeletonizer.sliver(
+                  enabled: true,
+                  child: SliverList(
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        child: UserTile(
+                          text: BoneMock.name,
+                          photourl: null,
+                          subtitle: Text(BoneMock.words(4)),
+                          onTap: null,
+                        ),
+                      );
+                    }, childCount: 8),
+                  ),
+                );
+              }
+
+              // Get cached or fresh data
+              final chats = homeStreamAsync.value ?? [];
+              final error = homeStreamAsync.error;
+
+              // Only show error if there's no cached data to display
+              if (error != null && chats.isEmpty) {
+                return SliverFillRemaining(
+                  child: const Center(child: Text('Error')),
+                );
+              }
+
               if (chats.isEmpty) {
                 return _buildEmptyState(context);
               }
+
               return _buildContent(context, chats);
             },
           ),

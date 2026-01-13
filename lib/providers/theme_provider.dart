@@ -1,7 +1,18 @@
-// import 'package:flutter_riverpod/legacy.dart';
-// import 'package:social/theme/light_theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/legacy.dart';
 
-// class ThemeProvider extends StateNotifier {
-//   final theme = lightMode;
-//   ThemeProvider(this.theme) : super({});
-// }
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.system);
+
+  void toggle() {
+    state = state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+  }
+
+  void setMode(ThemeMode mode) => state = mode;
+}
+
+final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>((
+  ref,
+) {
+  return ThemeModeNotifier();
+});
