@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:social/models/message.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/storage_service.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ChatService extends ChangeNotifier {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -295,6 +296,60 @@ class ChatService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // edit message
+  Future<void> editMessage(
+    String otherUserId,
+    String messageId,
+    String newMessage,
+  ) async {
+    final currentUserId = _auth.currentUser!.uid;
+    List<String> ids = [currentUserId, otherUserId];
+    ids.sort();
+    final chatRoomId = ids.join('_');
+
+    final messageRef = _firestore
+        .collection('Chat_rooms')
+        .doc(chatRoomId)
+        .collection('Messages')
+        .doc(messageId);
+
+    // Get message to verify ownership
+    final docSnapshot = await messageRef.get();
+    if (!docSnapshot.exists) return;
+
+    final data = docSnapshot.data() as Map<String, dynamic>;
+    final String senderId = data['senderID'];
+
+    // Only allow editing own messages
+    if (senderId != currentUserId) return;
+
+    // Update the message with edited content and timestamp
+    await messageRef.update({
+      'message': newMessage,
+      'isEdited': true,
+      'editedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Update last message in chat room if this was the last message
+    final chatRoomRef = _firestore.collection('Chat_rooms').doc(chatRoomId);
+    final chatRoomSnapshot = await chatRoomRef.get();
+
+    if (chatRoomSnapshot.exists) {
+      final chatRoomData = chatRoomSnapshot.data() as Map<String, dynamic>;
+      // Only update if this message's ID matches the last message
+      // We check by comparing timestamps
+      final Timestamp messageTimestamp = data['timestamp'];
+      final Timestamp? lastMessageTimestamp =
+          chatRoomData['lastMessageTimestamp'];
+
+      if (lastMessageTimestamp != null &&
+          messageTimestamp.millisecondsSinceEpoch ==
+              lastMessageTimestamp.millisecondsSinceEpoch) {
+        await chatRoomRef.update({'lastMessage': newMessage});
+      }
+    }
+  }
+
   // delete message
   Future<void> deleteMessage(
     String otherUserId,
@@ -447,6 +502,79 @@ class ChatService extends ChangeNotifier {
     return _firestore.collection('Users').doc(uid).snapshots();
   }
 
+  // send voice message
+  Future<void> sendVoiceMessage(
+    String receiverID,
+    String voicePath,
+    int duration, {
+    String? replyToId,
+    String? replyToMessage,
+    String? replyToSender,
+    String? replyToType,
+  }) async {
+    final String currentUserID = _auth.currentUser!.uid;
+    final String currentUserEmail = _auth.currentUser!.email!;
+    final Timestamp timestamp = Timestamp.now();
+
+    // construct chat room id
+    List<String> ids = [currentUserID, receiverID];
+    ids.sort();
+    String chatRoomID = ids.join('_');
+
+    // upload voice file to storage
+    File voiceFile = File(voicePath);
+    String voiceUrl = await _storageService.uploadChatFile(
+      chatRoomID,
+      'voice_${timestamp.millisecondsSinceEpoch}.m4a',
+      file: voiceFile,
+    );
+
+    // get sender info
+    DocumentSnapshot userDoc = await _firestore
+        .collection('Users')
+        .doc(currentUserID)
+        .get();
+
+    String username = userDoc['username'];
+
+    // send message (type voice)
+    Message message = Message(
+      senderID: currentUserID,
+      senderEmail: currentUserEmail,
+      senderName: username,
+      receiverID: receiverID,
+      message: voiceUrl,
+      timestamp: timestamp,
+      type: 'voice',
+      voiceDuration: duration,
+      replyToId: replyToId,
+      replyToMessage: replyToMessage,
+      replyToSender: replyToSender,
+      replyToType: replyToType,
+    );
+
+    // add to firestore
+    await _firestore
+        .collection('Chat_rooms')
+        .doc(chatRoomID)
+        .collection('Messages')
+        .add(message.toMap());
+
+    // update last message
+    await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
+      'participants': [currentUserID, receiverID],
+      'lastMessage': '🎤 Voice message',
+      'lastMessageTimestamp': timestamp,
+      'lastMessageStatus': MessageStatus.sent,
+      'lastSenderId': currentUserID,
+    }, SetOptions(merge: true));
+
+    // Delete local file after upload
+    if (await voiceFile.exists()) {
+      await voiceFile.delete();
+    }
+  }
+
   // send image message
   Future<void> sendMediaMessage(
     String receiverID,
@@ -471,9 +599,32 @@ class ChatService extends ChangeNotifier {
     String mediaUrl;
     String type;
     String notificationText;
+    String? thumbnailUrl;
 
     if (videoPath != null) {
-      // upload images to storage
+      // Generate video thumbnail
+      try {
+        final thumbnailData = await VideoThumbnail.thumbnailData(
+          video: videoPath,
+          imageFormat: ImageFormat.JPEG,
+          maxWidth: 300,
+          quality: 75,
+        );
+
+        if (thumbnailData != null) {
+          // Upload thumbnail to storage
+          final thumbnailFileName = 'thumb_$fileName.jpg';
+          thumbnailUrl = await _storageService.uploadChatFile(
+            chatRoomID,
+            thumbnailFileName,
+            filebytes: thumbnailData,
+          );
+        }
+      } catch (e) {
+        debugPrint('Error generating video thumbnail: $e');
+      }
+
+      // upload video to storage
       File videoFile = File(videoPath);
       mediaUrl = await _storageService.uploadChatFile(
         chatRoomID,
@@ -513,6 +664,7 @@ class ChatService extends ChangeNotifier {
       caption: caption,
       timestamp: timestamp,
       type: type,
+      thumbnailUrl: thumbnailUrl,
       replyToId: replyToId,
       replyToMessage: replyToMessage,
       replyToSender: replyToSender,
@@ -635,5 +787,85 @@ class ChatService extends ChangeNotifier {
         .collection('Starred_Messages')
         .orderBy('starredAt', descending: true)
         .snapshots();
+  }
+
+  // ======================== TYPING INDICATOR ========================
+
+  /// Update typing status for current user in a chat
+  Future<void> setTypingStatus(String receiverId, bool isTyping) async {
+    final currentUserId = _auth.currentUser!.uid;
+
+    // Construct chat room ID
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    await _firestore.collection('Chat_rooms').doc(chatRoomId).set({
+      'typing': {currentUserId: isTyping ? Timestamp.now() : null},
+    }, SetOptions(merge: true));
+  }
+
+  /// Stream to listen for typing status of other user
+  Stream<bool> getTypingStatus(String receiverId) {
+    final currentUserId = _auth.currentUser!.uid;
+
+    // Construct chat room ID
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    return _firestore.collection('Chat_rooms').doc(chatRoomId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return false;
+
+      final data = snapshot.data();
+      if (data == null || !data.containsKey('typing')) return false;
+
+      final typing = data['typing'] as Map<String, dynamic>?;
+      if (typing == null) return false;
+
+      final otherUserTyping = typing[receiverId];
+      if (otherUserTyping == null) return false;
+
+      // Check if typing timestamp is recent (within last 5 seconds)
+      if (otherUserTyping is Timestamp) {
+        final typingTime = otherUserTyping.toDate();
+        final now = DateTime.now();
+        return now.difference(typingTime).inSeconds < 5;
+      }
+
+      return false;
+    });
+  }
+
+  // ======================== ONLINE STATUS ========================
+
+  /// Update current user's online status
+  Future<void> setOnlineStatus(bool isOnline) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    await _firestore.collection('Users').doc(user.uid).update({
+      'isOnline': isOnline,
+      'lastSeen': Timestamp.now(),
+    });
+  }
+
+  /// Stream to listen for a user's online status
+  Stream<Map<String, dynamic>> getUserOnlineStatus(String userId) {
+    return _firestore.collection('Users').doc(userId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) {
+        return {'isOnline': false, 'lastSeen': null};
+      }
+
+      final data = snapshot.data();
+      return {
+        'isOnline': data?['isOnline'] ?? false,
+        'lastSeen': data?['lastSeen'],
+      };
+    });
   }
 }

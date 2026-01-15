@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:social/providers/theme_provider.dart';
+import 'package:social/services/notification_service.dart';
 import 'package:social/theme/dark_theme.dart';
 import 'package:social/theme/light_theme.dart';
 import 'package:social/utils/router.dart';
@@ -19,10 +20,17 @@ void main() async {
     persistenceEnabled: true,
     cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
   );
+
+  // Initialize notifications early to capture getInitialMessage (non-blocking)
+  // Don't await - let it run in background so app doesn't get stuck
+  NotificationService().initNotifications().catchError((e) {
+    debugPrint('Notification init error (non-fatal): $e');
+  });
+
   runApp(
     ProviderScope(
       child: DevicePreview(
-        enabled: !kReleaseMode,
+        enabled: false,
         builder: (context) => const MyApp(),
         defaultDevice: Devices.android.googlePixel9,
       ),
@@ -46,7 +54,6 @@ class MyApp extends ConsumerWidget {
       themeMode: themeMode,
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
-        
         final theme = Theme.of(context);
         return AnnotatedRegion<SystemUiOverlayStyle>(
           value: SystemUiOverlayStyle(

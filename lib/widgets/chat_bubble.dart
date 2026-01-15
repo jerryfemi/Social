@@ -6,6 +6,7 @@ import 'package:skeletonizer/skeletonizer.dart';
 import 'package:social/providers/chat_provider.dart';
 import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
+import 'package:social/widgets/voice_message_bubble.dart';
 
 class ChatBubble extends ConsumerStatefulWidget {
   const ChatBubble({
@@ -20,6 +21,8 @@ class ChatBubble extends ConsumerStatefulWidget {
     required this.receiverId,
     this.isStarred = false,
     this.onReply,
+    this.onReplyTap,
+    this.isHighlighted = false,
   });
 
   final Alignment alignment;
@@ -32,6 +35,8 @@ class ChatBubble extends ConsumerStatefulWidget {
   final String receiverId;
   final bool isStarred;
   final void Function()? onReply;
+  final void Function(String replyToId)? onReplyTap;
+  final bool isHighlighted;
 
   @override
   ConsumerState<ChatBubble> createState() => _ChatBubbleState();
@@ -127,11 +132,21 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                     );
               },
             ),
+            // edit message (only for text messages from sender)
+            if (widget.isSender && widget.data['type'] == 'text')
+              ListTile(
+                leading: Icon(Icons.edit),
+                title: Text('Edit'),
+                onTap: () {
+                  context.pop();
+                  _showEditDialog(context, ref, messageId, otherUserId);
+                },
+              ),
             // report message
             if (!widget.isSender)
               ListTile(
                 leading: Icon(Icons.flag),
-                title: Text('report'),
+                title: Text('Report'),
                 onTap: () {
                   context.pop();
                   report(context, ref, messageId, userId);
@@ -140,7 +155,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
             // delete message
             ListTile(
               leading: Icon(Icons.delete_rounded),
-              title: Text('delete'),
+              title: Text('Delete'),
               onTap: () {
                 context.pop();
                 deleteMessage(context, ref, messageId, otherUserId);
@@ -148,6 +163,53 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // Edit message dialog
+  void _showEditDialog(
+    BuildContext context,
+    WidgetRef ref,
+    String messageId,
+    String otherUserId,
+  ) {
+    final TextEditingController editController = TextEditingController(
+      text: widget.data['message'],
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Message'),
+        content: TextField(
+          controller: editController,
+          autofocus: true,
+          maxLines: null,
+          decoration: const InputDecoration(
+            hintText: 'Edit your message...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => context.pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newMessage = editController.text.trim();
+              if (newMessage.isNotEmpty &&
+                  newMessage != widget.data['message']) {
+                ref
+                    .read(chatServiceProvider)
+                    .editMessage(otherUserId, messageId, newMessage);
+              }
+              context.pop();
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }
@@ -217,6 +279,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
   Widget build(BuildContext context) {
     bool isImage = widget.data['type'] == 'image';
     bool isVideo = widget.data['type'] == 'video';
+    bool isVoice = widget.data['type'] == 'voice';
     bool isMedia = isImage || isVideo;
     final String? caption = widget.data['caption'];
     final textTime = DateUtil.getFormattedTime(widget.data['timestamp']);
@@ -248,8 +311,8 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
               opacity: replyIconOpacity,
               child: Padding(
                 padding: EdgeInsets.only(
-                  left: widget.isSender ? 20 : 0,
-                  right: widget.isSender ? 0 : 20,
+                  left: widget.isSender ? 10 : 0,
+                  right: widget.isSender ? 0 : 10,
                 ),
                 child: Container(
                   padding: const EdgeInsets.all(8),
@@ -283,8 +346,17 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
               },
               child: Transform.translate(
                 offset: Offset(offset, 0),
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
                   alignment: widget.alignment,
+                  decoration: BoxDecoration(
+                    color: widget.isHighlighted
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.2)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Column(
@@ -324,7 +396,16 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                                   // Reply quote if exists
                                   if (hasReply) _buildReplyQuote(context),
 
-                                  isMedia
+                                  isVoice
+                                      ? VoiceMessageBubble(
+                                          audioUrl: widget.data['message'],
+                                          duration:
+                                              widget.data['voiceDuration'] ?? 0,
+                                          isSender: widget.isSender,
+                                          bubbleColor: widget.bubbleColor,
+                                          textTime: textTime,
+                                        )
+                                      : isMedia
                                       ? _buildMediaContent(
                                           context,
                                           isVideo: isVideo,
@@ -351,50 +432,83 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
 
   // BUILD REPLY QUOTE (shown inside bubble)
   Widget _buildReplyQuote(BuildContext context) {
+    final replyToId = widget.data['replyToId'];
     final replyToSender = widget.data['replyToSender'] ?? '';
     final replyToMessage = widget.data['replyToMessage'] ?? '';
     final replyToType = widget.data['replyToType'] ?? 'text';
     final isMediaReply = replyToType == 'image' || replyToType == 'video';
+    final isVoiceReply = replyToType == 'voice';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(8),
-        border: Border(
-          left: BorderSide(
-            color: widget.isSender
-                ? Colors.white70
-                : Theme.of(context).colorScheme.primary,
-            width: 2,
+    String displayMessage;
+    if (isVoiceReply) {
+      displayMessage = '🎤 Voice message';
+    } else if (isMediaReply) {
+      displayMessage = '📷 Photo';
+    } else {
+      displayMessage = replyToMessage;
+    }
+
+    return GestureDetector(
+      onTap: replyToId != null && widget.onReplyTap != null
+          ? () => widget.onReplyTap!(replyToId)
+          : null,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(
+              color: widget.isSender
+                  ? Colors.white70
+                  : Theme.of(context).colorScheme.primary,
+              width: 2,
+            ),
           ),
         ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              replyToSender,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                color: widget.isSender
+                    ? Colors.white
+                    : Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              displayMessage,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: widget.isSender ? Colors.white70 : Colors.black54,
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  // Build placeholder for videos without thumbnail
+  Widget _buildVideoPlaceholder() {
+    return Container(
+      height: 300,
+      width: 250,
+      color: Colors.grey[800],
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            replyToSender,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-              color: widget.isSender
-                  ? Colors.white
-                  : Theme.of(context).colorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            isMediaReply ? '📷 Photo' : replyToMessage,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              color: widget.isSender ? Colors.white70 : Colors.black54,
-            ),
-          ),
+          const Icon(Icons.videocam, color: Colors.white70, size: 50),
+          const SizedBox(height: 8),
+          Text("Video", style: TextStyle(color: Colors.white70, fontSize: 14)),
         ],
       ),
     );
@@ -435,42 +549,70 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                 borderRadius: BorderRadius.circular(12),
                 child: Hero(
                   tag: widget.data['message'],
-                  child: CachedNetworkImage(
-                    imageUrl: widget.data['message'],
-                    height: 300,
-                    width: 250,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) => Skeleton.replace(
-                      height: 300,
-                      width: 250,
-                      child: Container(
-                        color: Colors.transparent.withValues(alpha: 0.4),
-                        height: 300,
-                        width: 250,
-                        child: Center(child: const CircularProgressIndicator()),
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      height: 300,
-                      width: 250,
-                      color: Colors.grey[300],
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.broken_image,
-                            color: Colors.red,
-                            size: 40,
+                  child: isVideo && widget.data['thumbnailUrl'] != null
+                      ? CachedNetworkImage(
+                          imageUrl: widget.data['thumbnailUrl'],
+                          height: 300,
+                          width: 250,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Skeleton.replace(
+                            height: 300,
+                            width: 250,
+                            child: Container(
+                              color: Colors.transparent.withValues(alpha: 0.4),
+                              height: 300,
+                              width: 250,
+                              child: Center(
+                                child: const CircularProgressIndicator(),
+                              ),
+                            ),
                           ),
-                          const SizedBox(height: 5),
-                          Text(
-                            "Failed to load",
-                            style: TextStyle(color: Colors.red, fontSize: 12),
+                          errorWidget: (context, url, error) =>
+                              _buildVideoPlaceholder(),
+                        )
+                      : isVideo
+                      ? _buildVideoPlaceholder()
+                      : CachedNetworkImage(
+                          imageUrl: widget.data['message'],
+                          height: 300,
+                          width: 250,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Skeleton.replace(
+                            height: 300,
+                            width: 250,
+                            child: Container(
+                              color: Colors.transparent.withValues(alpha: 0.4),
+                              height: 300,
+                              width: 250,
+                              child: Center(
+                                child: const CircularProgressIndicator(),
+                              ),
+                            ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
+                          errorWidget: (context, url, error) => Container(
+                            height: 300,
+                            width: 250,
+                            color: Colors.grey[300],
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.broken_image,
+                                  color: Colors.red,
+                                  size: 40,
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  "Failed to load",
+                                  style: TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                 ),
               ),
             ),
@@ -598,6 +740,8 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
 
   // BUILD TEXT CONTENT
   Widget _buildTextContent(BuildContext context, String textTime) {
+    final bool isEdited = widget.data['isEdited'] == true;
+
     return Stack(
       children: [
         Text.rich(
@@ -607,7 +751,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
               fontSize: 14,
               color: widget.isSender ? Colors.white : Colors.black,
             ),
-            children: [const WidgetSpan(child: SizedBox(width: 75))],
+            children: [WidgetSpan(child: SizedBox(width: isEdited ? 95 : 75))],
           ),
         ),
         Positioned(
@@ -620,6 +764,18 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                 Padding(
                   padding: const EdgeInsets.only(right: 3),
                   child: Icon(Icons.star, size: 12, color: Colors.orange),
+                ),
+              if (isEdited)
+                Padding(
+                  padding: const EdgeInsets.only(right: 3),
+                  child: Text(
+                    'edited',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontStyle: FontStyle.italic,
+                      color: Colors.white60,
+                    ),
+                  ),
                 ),
               Text(
                 textTime,

@@ -21,6 +21,10 @@ class Message {
   final String? replyToMessage;
   final String? replyToSender;
   final String? replyToType;
+  // Voice message fields
+  final int? voiceDuration;
+  // Video thumbnail
+  final String? thumbnailUrl;
 
   Message({
     required this.senderID,
@@ -36,6 +40,8 @@ class Message {
     this.replyToMessage,
     this.replyToSender,
     this.replyToType,
+    this.voiceDuration,
+    this.thumbnailUrl,
   });
 
   // conver to map
@@ -55,6 +61,8 @@ class Message {
       if (replyToMessage != null) 'replyToMessage': replyToMessage,
       if (replyToSender != null) 'replyToSender': replyToSender,
       if (replyToType != null) 'replyToType': replyToType,
+      if (voiceDuration != null) 'voiceDuration': voiceDuration,
+      if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
     };
   }
 }

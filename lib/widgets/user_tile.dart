@@ -5,6 +5,7 @@ class UserTile extends StatelessWidget {
   final String text;
   final String? photourl;
   final Widget? subtitle;
+  final Widget? trailing;
   final void Function()? onTap;
   const UserTile({
     super.key,
@@ -12,6 +13,7 @@ class UserTile extends StatelessWidget {
     required this.text,
     this.photourl,
     this.subtitle,
+    this.trailing,
   });
 
   @override
@@ -72,6 +74,7 @@ class UserTile extends StatelessWidget {
                 ],
               ),
             ),
+            if (trailing != null) trailing!,
           ],
         ),
       ),

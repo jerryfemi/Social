@@ -38,10 +38,16 @@ class SearchBarDelegate extends SliverPersistentHeaderDelegate {
             onChanged: onChanged,
             controller: controller,
             placeholder: 'Search users...',
+            placeholderStyle: TextStyle(
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.5),
+            ),
+
             backgroundColor: Theme.of(
               context,
             ).colorScheme.secondary, // Make it pop slightly
-            style: const TextStyle(),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           ),
         ),
       ),

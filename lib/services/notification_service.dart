@@ -3,17 +3,36 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social/utils/router.dart';
 
 class NotificationService {
+  // Singleton pattern
+  static final NotificationService _instance = NotificationService._internal();
+  factory NotificationService() => _instance;
+  NotificationService._internal();
+
   final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _fireStore = FirebaseFirestore.instance;
 
-  // Local notifications for foreground
+  // Track current chat to suppress notifications
+  String? _currentChatUserId;
+
+  // Store pending navigation data for when app opens from terminated state
+  Map<String, dynamic>? _pendingNotificationData;
+  bool _isInitialized = false;
+
+  // Track message counts per sender for grouping
+  final Map<String, int> _messageCountPerSender = {};
+  final Map<String, List<String>> _messagesPerSender = {};
+
+  // Group key for bundled notifications
+  static const String _groupKey = 'com.example.social.MESSAGES';
+
+  // Local notifications for foreground only
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -24,8 +43,31 @@ class NotificationService {
     importance: Importance.max,
   );
 
-  // initialize
+  /// Call this when entering a chat screen
+  void setCurrentChat(String? userId) {
+    _currentChatUserId = userId;
+    debugPrint('NotificationService: Current chat set to $userId');
+  }
+
+  /// Call this when leaving a chat screen
+  void clearCurrentChat() {
+    _currentChatUserId = null;
+    debugPrint('NotificationService: Current chat cleared');
+  }
+
+  /// Clear all notifications from the tray (call when app opens/resumes)
+  Future<void> clearAllNotifications() async {
+    await _localNotifications.cancelAll();
+    _messageCountPerSender.clear();
+    _messagesPerSender.clear();
+    debugPrint('NotificationService: All notifications cleared');
+  }
+
+  // initialize - call this early in main.dart
   Future<void> initNotifications() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+
     // request permission
     await _requestPermission();
 
@@ -41,41 +83,141 @@ class NotificationService {
     });
 
     // Listen for foreground messages and show local notification
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      RemoteNotification? notification = message.notification;
-      AndroidNotification? android = message.notification?.android;
+    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-      if (notification != null && android != null) {
-        _localNotifications.show(
-          notification.hashCode,
-          notification.title,
-          notification.body,
-          NotificationDetails(
-            android: AndroidNotificationDetails(
-              _channel.id,
-              _channel.name,
-              channelDescription: _channel.description,
-              icon: '@mipmap/ic_launcher',
-            ),
-          ),
-          payload: jsonEncode(message.data),
-        );
-      }
-    });
+    // Handle tap when app is in background (not terminated)
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageTap);
 
-    // Handle tap when app is in background
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleNavigation);
-
-    // Handle tap when app is terminated
+    // Handle tap when app was terminated - store for later processing
     RemoteMessage? initialMessage = await _firebaseMessaging
         .getInitialMessage();
     if (initialMessage != null) {
-      // little delay
-      Future.delayed(
-        const Duration(milliseconds: 500),
-        () => _handleNavigation(initialMessage),
-      );
+      debugPrint('App opened from terminated state with notification');
+      _pendingNotificationData = initialMessage.data;
     }
+  }
+
+  /// Call this after the router is ready (e.g., in home screen initState)
+  void processPendingNotification() {
+    if (_pendingNotificationData != null) {
+      debugPrint('Processing pending notification navigation');
+      final data = _pendingNotificationData!;
+      _pendingNotificationData = null;
+      // Small delay to ensure navigation context is fully ready
+      Future.delayed(const Duration(milliseconds: 300), () {
+        _navigateFromData(data);
+      });
+    }
+  }
+
+  /// Handle foreground messages - show grouped local notification
+  void _handleForegroundMessage(RemoteMessage message) {
+    RemoteNotification? notification = message.notification;
+    AndroidNotification? android = message.notification?.android;
+
+    if (notification == null || android == null) return;
+
+    // Get sender info from the message data
+    final String? senderId = message.data['senderID'];
+    final String? senderName = notification.title;
+    final String? messageBody = notification.body;
+
+    // Debug logging
+    debugPrint('=== NOTIFICATION DEBUG ===');
+    debugPrint('Received notification from senderId: $senderId');
+    debugPrint('Current chat userId: $_currentChatUserId');
+    debugPrint('Are they equal? ${senderId == _currentChatUserId}');
+    debugPrint('Full message.data: ${message.data}');
+    debugPrint('==========================');
+
+    // Don't show notification if we're already in that chat
+    if (senderId != null && senderId == _currentChatUserId) {
+      debugPrint('Suppressing notification - already in chat with $senderId');
+      return;
+    }
+
+    if (senderId == null || senderName == null) return;
+
+    // Track messages per sender
+    _messageCountPerSender[senderId] =
+        (_messageCountPerSender[senderId] ?? 0) + 1;
+    _messagesPerSender[senderId] ??= [];
+    if (messageBody != null) {
+      _messagesPerSender[senderId]!.add(messageBody);
+      // Keep only last 5 messages for inbox style
+      if (_messagesPerSender[senderId]!.length > 5) {
+        _messagesPerSender[senderId]!.removeAt(0);
+      }
+    }
+
+    final int messageCount = _messageCountPerSender[senderId]!;
+    final List<String> messages = _messagesPerSender[senderId]!;
+
+    // Create notification ID based on sender (so same sender updates the same notification)
+    final int notificationId = senderId.hashCode;
+
+    // Build inbox style for multiple messages
+    final InboxStyleInformation? inboxStyle = messageCount > 1
+        ? InboxStyleInformation(
+            messages,
+            contentTitle: '$messageCount messages from $senderName',
+            summaryText: '$messageCount messages',
+          )
+        : null;
+
+    // Show individual notification (grouped)
+    _localNotifications.show(
+      notificationId,
+      messageCount > 1 ? '$senderName ($messageCount)' : senderName,
+      messageCount > 1 ? '${messages.last}' : messageBody,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          icon: '@mipmap/ic_launcher',
+          importance: Importance.max,
+          priority: Priority.high,
+          groupKey: _groupKey,
+          styleInformation: inboxStyle,
+          setAsGroupSummary: false,
+        ),
+        iOS: DarwinNotificationDetails(threadIdentifier: senderId),
+      ),
+      payload: jsonEncode(message.data),
+    );
+
+    // Show/update summary notification (for grouping multiple senders)
+    _showGroupSummary();
+  }
+
+  /// Show summary notification for grouped messages
+  Future<void> _showGroupSummary() async {
+    final int totalSenders = _messageCountPerSender.keys.length;
+    if (totalSenders <= 1) return; // No need for summary with single sender
+
+    final int totalMessages = _messageCountPerSender.values.fold(
+      0,
+      (a, b) => a + b,
+    );
+
+    await _localNotifications.show(
+      0, // Summary notification ID
+      'Social',
+      '$totalMessages messages from $totalSenders chats',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          icon: '@mipmap/ic_launcher',
+          groupKey: _groupKey,
+          setAsGroupSummary: true,
+          importance: Importance.max,
+          priority: Priority.high,
+        ),
+      ),
+    );
   }
 
   Future<void> _setupForegroundNotifications() async {
@@ -99,9 +241,10 @@ class NotificationService {
 
     await _localNotifications.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (details) {
+      onDidReceiveNotificationResponse: (NotificationResponse details) {
+        debugPrint('Local notification tapped: ${details.payload}');
         if (details.payload != null) {
-          _handleNavigationFromPayload(details.payload!);
+          _navigateToChat(details.payload!);
         }
       },
     );
@@ -114,21 +257,58 @@ class NotificationService {
     );
   }
 
-  void _handleNavigationFromPayload(String payload) {
+  /// Navigate to chat from notification payload (JSON string)
+  void _navigateToChat(String payload) {
     try {
       final data = jsonDecode(payload) as Map<String, dynamic>;
-      final String? senderName = data['senderName'];
-      final String? senderId = data['senderID'];
-      final String? photoUrl = data['photoUrl'];
-
-      if (senderId != null && senderName != null) {
-        navigatorKey.currentContext?.go(
-          '/chat/$senderName/$senderId',
-          extra: photoUrl,
-        );
-      }
+      _navigateFromData(data);
     } catch (e) {
-      print('Error parsing notification payload: $e');
+      debugPrint('Error parsing notification payload: $e');
+    }
+  }
+
+  /// Handle tap on FCM notification (background/terminated)
+  void _handleMessageTap(RemoteMessage message) {
+    debugPrint('Notification tapped: ${message.data}');
+    _navigateFromData(message.data);
+  }
+
+  /// Navigate to chat screen from notification data
+  void _navigateFromData(Map<String, dynamic> data, {int retryCount = 0}) {
+    final String? senderName = data['senderName'];
+    final String? senderId = data['senderID'];
+    final String? photoUrl = data['photoUrl'];
+
+    debugPrint('Navigating to chat: $senderName ($senderId)');
+
+    if (senderId == null || senderName == null) {
+      debugPrint('Missing senderId or senderName in notification data');
+      return;
+    }
+
+    // Use the router to navigate with GoRouter
+    final context = navigatorKey.currentContext;
+    if (context != null && context.mounted) {
+      try {
+        context.push('/chat/$senderName/$senderId', extra: photoUrl);
+      } catch (e) {
+        debugPrint('Navigation error: $e');
+        if (retryCount < 5) {
+          Future.delayed(const Duration(milliseconds: 500), () {
+            _navigateFromData(data, retryCount: retryCount + 1);
+          });
+        }
+      }
+    } else if (retryCount < 10) {
+      debugPrint(
+        'Navigator context is null - retrying in 500ms (attempt ${retryCount + 1})',
+      );
+      // Retry after a short delay if context isn't ready
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _navigateFromData(data, retryCount: retryCount + 1);
+      });
+    } else {
+      debugPrint('Failed to navigate after $retryCount retries');
     }
   }
 
@@ -141,12 +321,12 @@ class NotificationService {
     );
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      print('USER AUTHORIZED');
+      debugPrint('Notification permission: AUTHORIZED');
     } else if (settings.authorizationStatus ==
         AuthorizationStatus.provisional) {
-      print('user granted provisional permission');
+      debugPrint('Notification permission: PROVISIONAL');
     } else {
-      print('PERMISSION DENIED');
+      debugPrint('Notification permission: DENIED');
     }
   }
 
@@ -158,7 +338,7 @@ class NotificationService {
         // Check if notifications are supported
         final settings = await _firebaseMessaging.getNotificationSettings();
         if (settings.authorizationStatus != AuthorizationStatus.authorized) {
-          print('Notifications not authorized on web');
+          debugPrint('Notifications not authorized on web');
           return;
         }
       }
@@ -166,15 +346,13 @@ class NotificationService {
       String? token = await _firebaseMessaging.getToken();
 
       if (token != null) {
-        print('FCM token: $token');
+        debugPrint('FCM token obtained');
         await _saveTokenToFirestore(token);
       }
     } catch (e) {
-      print('error getting token: $e');
-      // On web, service worker issues shouldn't crash the app
-      if (!kIsWeb) {
-        rethrow;
-      }
+      debugPrint('Error getting FCM token: $e');
+      // Don't rethrow - FCM token failure shouldn't crash the app
+      // Notifications just won't work until service is available
     }
   }
 
@@ -187,19 +365,5 @@ class NotificationService {
     await _fireStore.collection('Users').doc(user.uid).set({
       'token': token,
     }, SetOptions(merge: true));
-  }
-
-  void _handleNavigation(RemoteMessage message) {
-    final String? senderName = message.data['senderName'];
-    final String? senderId = message.data['senderID'];
-    final String? photoUrl = message.data['photoUrl'];
-
-    if (senderId != null && senderName != null) {
-      // Use the global navigator key to navigate
-      navigatorKey.currentContext?.go(
-        '/chat/$senderName/$senderId',
-        extra: photoUrl,
-      );
-    }
   }
 }

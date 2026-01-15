@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:chewie/chewie.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 
 class VideoPlayerScreen extends StatefulWidget {
@@ -27,9 +31,37 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _initializePlayer() async {
     try {
-      _videoPlayerController = VideoPlayerController.networkUrl(
-        Uri.parse(widget.videoUrl),
-      );
+      // Try to get cached video file first
+      File? cachedFile;
+
+      if (!kIsWeb) {
+        try {
+          final fileInfo = await DefaultCacheManager().getFileFromCache(
+            widget.videoUrl,
+          );
+          if (fileInfo != null) {
+            cachedFile = fileInfo.file;
+            debugPrint('Playing video from cache: ${cachedFile.path}');
+          } else {
+            // Download and cache the video
+            cachedFile = await DefaultCacheManager().getSingleFile(
+              widget.videoUrl,
+            );
+            debugPrint('Downloaded and cached video: ${cachedFile.path}');
+          }
+        } catch (e) {
+          debugPrint('Video cache failed, using network: $e');
+        }
+      }
+
+      // Use cached file if available, otherwise use network URL
+      if (cachedFile != null && await cachedFile.exists()) {
+        _videoPlayerController = VideoPlayerController.file(cachedFile);
+      } else {
+        _videoPlayerController = VideoPlayerController.networkUrl(
+          Uri.parse(widget.videoUrl),
+        );
+      }
 
       await _videoPlayerController.initialize();
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -11,9 +13,12 @@ import 'package:mime/mime.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:social/models/message.dart';
 import 'package:social/services/auth_service.dart';
+import 'package:social/services/cache_service.dart';
+import 'package:social/services/notification_service.dart';
 import 'package:social/providers/chat_provider.dart';
 import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/chat_bubble.dart';
+import 'package:social/widgets/voice_recorder_button.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -34,6 +39,7 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _messageController = TextEditingController();
   final authService = AuthService();
+  final _notificationService = NotificationService();
   final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   bool _showAttachments = false;
@@ -48,9 +54,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _replyingToId;
   String? _replyingToSender;
 
+  // Voice recording state
+  bool _isRecording = false;
+  final GlobalKey<VoiceRecorderButtonState> _voiceRecorderKey = GlobalKey();
+
+  // Track if text field has content
+  bool _hasText = false;
+
+  // Highlight state for scroll-to-message
+  String? _highlightedMessageId;
+  final Map<String, GlobalKey> _messageKeys = {};
+
+  // Cache debounce - only cache once per session unless messages change
+  int _lastCachedMessageCount = 0;
+
+  // Typing indicator
+  Timer? _typingTimer;
+  bool _isTyping = false;
+
   @override
   void initState() {
     super.initState();
+
+    // Tell notification service we're in this chat (suppress notifications from this user)
+    _notificationService.setCurrentChat(widget.receiverId);
+
     // scroll down if focusNode has focus
     _focusNode.addListener(() {
       if (_focusNode.hasFocus) {
@@ -59,16 +87,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
         Future.delayed(Duration(milliseconds: 300), () => _scrollDown());
       }
+      // Trigger rebuild when focus changes
+      setState(() {});
     });
+
+    // Listen for text changes and update typing status
+    _messageController.addListener(_onTextChanged);
+  }
+
+  void _onTextChanged() {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    if (hasText != _hasText) {
+      setState(() {
+        _hasText = hasText;
+      });
+    }
+
+    // Update typing status
+    if (_messageController.text.isNotEmpty) {
+      _setTyping(true);
+    }
+  }
+
+  void _setTyping(bool typing) {
+    if (typing) {
+      // Set typing to true
+      if (!_isTyping) {
+        _isTyping = true;
+        ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, true);
+      }
+
+      // Reset the timer
+      _typingTimer?.cancel();
+      _typingTimer = Timer(const Duration(seconds: 3), () {
+        _isTyping = false;
+        ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
+      });
+    } else {
+      _typingTimer?.cancel();
+      _isTyping = false;
+      ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
+    }
   }
 
   // dispose
   @override
   void dispose() {
-    super.dispose();
+    // Clear typing status
+    _typingTimer?.cancel();
+    if (_isTyping) {
+      ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
+    }
+    // Clear current chat so notifications show again
+    _notificationService.clearCurrentChat();
     _focusNode.dispose();
     _scrollController.dispose();
+    _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
+    super.dispose();
   }
 
   void _toggleAttachments() {
@@ -98,6 +174,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           curve: Curves.easeOut,
         );
       }
+    }
+  }
+
+  // Format last seen timestamp
+  String _formatLastSeen(dynamic timestamp) {
+    DateTime lastSeenTime;
+
+    if (timestamp is Timestamp) {
+      lastSeenTime = timestamp.toDate();
+    } else if (timestamp is int) {
+      lastSeenTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    } else {
+      return '';
+    }
+
+    final now = DateTime.now();
+    final difference = now.difference(lastSeenTime);
+
+    if (difference.inMinutes < 1) {
+      return 'Last seen just now';
+    } else if (difference.inMinutes < 60) {
+      return 'Last seen ${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return 'Last seen ${difference.inHours}h ago';
+    } else if (difference.inDays == 1) {
+      return 'Last seen yesterday';
+    } else if (difference.inDays < 7) {
+      return 'Last seen ${difference.inDays}d ago';
+    } else {
+      return 'Last seen ${lastSeenTime.day}/${lastSeenTime.month}/${lastSeenTime.year}';
+    }
+  }
+
+  // Scroll to a specific message and highlight it
+  void _scrollToMessage(String messageId) {
+    final key = _messageKeys[messageId];
+    if (key?.currentContext != null) {
+      // Scroll to the message
+      Scrollable.ensureVisible(
+        key!.currentContext!,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        alignment: 0.5, // Center the message
+      );
+
+      // Highlight the message briefly
+      setState(() {
+        _highlightedMessageId = messageId;
+      });
+
+      // Remove highlight after animation
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (mounted) {
+          setState(() {
+            _highlightedMessageId = null;
+          });
+        }
+      });
     }
   }
 
@@ -154,11 +288,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // clear textfield and reply
       _messageController.clear();
       _clearReply();
+      _setTyping(false); // Clear typing status when message sent
 
       // scroll down after sending mesage
       _scrollDown();
     } catch (e) {
       _showSnackBar('Error: $e');
+    }
+  }
+
+  // Send voice message
+  void _sendVoiceMessage(String voicePath, int duration) async {
+    // Capture reply data before clearing
+    final replyToId = _replyingToId;
+    final replyToMessage = _replyingTo?['message'] as String?;
+    final replyToSender = _replyingToSender;
+    final replyToType = _replyingTo?['type'] as String? ?? 'text';
+
+    try {
+      await ref
+          .read(chatServiceProvider)
+          .sendVoiceMessage(
+            widget.receiverId,
+            voicePath,
+            duration,
+            replyToId: replyToId,
+            replyToMessage: replyToMessage,
+            replyToSender: replyToSender,
+            replyToType: replyToType,
+          );
+
+      // Clear reply
+      _clearReply();
+
+      // Scroll down after sending
+      _scrollDown();
+    } catch (e) {
+      _showSnackBar('Error sending voice message: $e');
     }
   }
 
@@ -335,11 +501,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       next.whenData((snapshot) {
         if (!mounted) return;
 
+        // Mark messages as read
         Future.delayed(Duration.zero, () {
           ref
               .read(chatServiceProvider)
               .messageRead(authService.currentUser!.uid, widget.receiverId);
         });
+
+        // Cache messages for offline viewing (only if count changed)
+        if (snapshot.docs.isNotEmpty &&
+            snapshot.docs.length != _lastCachedMessageCount) {
+          _lastCachedMessageCount = snapshot.docs.length;
+          final currentUserId = authService.currentUser!.uid;
+          final messagesToCache = snapshot.docs.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return {...data, 'docId': doc.id};
+          }).toList();
+          CacheService.cacheChatMessages(
+            currentUserId,
+            widget.receiverId,
+            messagesToCache,
+          );
+        }
       });
 
       Future.delayed(const Duration(milliseconds: 100), () {
@@ -387,9 +570,81 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
               ),
               SizedBox(width: 10),
-              Text(
-                widget.receiverName,
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.receiverName,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                  // Typing indicator or Online status
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final typingAsync = ref.watch(
+                        typingStatusProvider(widget.receiverId),
+                      );
+                      final onlineAsync = ref.watch(
+                        onlineStatusProvider(widget.receiverId),
+                      );
+                      final isTyping = typingAsync.value ?? false;
+                      final onlineData = onlineAsync.value;
+                      final isOnline = onlineData?['isOnline'] ?? false;
+
+                      // Priority: typing > online > last seen
+                      if (isTyping) {
+                        return Text(
+                          'typing...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.primary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        );
+                      }
+
+                      if (isOnline) {
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Active now',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      // Show last seen if not online
+                      final lastSeen = onlineData?['lastSeen'];
+                      if (lastSeen != null) {
+                        return Text(
+                          _formatLastSeen(lastSeen),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.6),
+                          ),
+                        );
+                      }
+
+                      return const SizedBox.shrink();
+                    },
+                  ),
+                ],
               ),
             ],
           ),
@@ -436,56 +691,163 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // build message list
   Widget _buildMessageList() {
     final messageAsync = ref.watch(messageProvider(widget.receiverId));
+    final cachedMessages = ref.watch(cachedMessagesProvider(widget.receiverId));
 
     return Padding(
       padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
       child: Builder(
         builder: (context) {
+          final cached = cachedMessages.value;
+
           // Only show skeleton when truly no data (not in cache)
-          if (messageAsync.isLoading && !messageAsync.hasValue) {
+          if (messageAsync.isLoading &&
+              !messageAsync.hasValue &&
+              (cached == null || cached.isEmpty)) {
             return _buildSkeletonMessages();
           }
 
           final snapshot = messageAsync.value;
           final error = messageAsync.error;
 
-          if (error != null && !messageAsync.hasValue) {
-            return const Center(child: Text('Error:'));
+          // If we have live data, use it
+          if (snapshot != null && snapshot.docs.isNotEmpty) {
+            final currentUserId = authService.currentUser!.uid;
+            final message = snapshot.docs.reversed.toList();
+
+            // Filter out messages deleted for current user
+            final filteredMessages = message.where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final List<dynamic> deletedFor = data['deletedFor'] ?? [];
+              return !deletedFor.contains(currentUserId);
+            }).toList();
+
+            if (filteredMessages.isEmpty) {
+              return const Center(child: Text('No Messages yet'));
+            }
+
+            return ListView.builder(
+              reverse: true,
+              controller: _scrollController,
+              itemBuilder: (context, index) {
+                return _buildMessageItemWithDate(
+                  filteredMessages,
+                  index,
+                  context,
+                );
+              },
+              itemCount: filteredMessages.length,
+            );
           }
 
-          if (snapshot == null || snapshot.docs.isEmpty) {
-            return const Center(child: Text('No Messages yet'));
+          // Fall back to cached data while loading
+          if (cached != null && cached.isNotEmpty) {
+            final currentUserId = authService.currentUser!.uid;
+            final reversedCached = cached.reversed.toList();
+
+            // Filter out messages deleted for current user
+            final filteredCached = reversedCached.where((msg) {
+              final List<dynamic> deletedFor = msg['deletedFor'] ?? [];
+              return !deletedFor.contains(currentUserId);
+            }).toList();
+
+            if (filteredCached.isEmpty) {
+              return const Center(child: Text('No Messages yet'));
+            }
+
+            return ListView.builder(
+              reverse: true,
+              controller: _scrollController,
+              itemBuilder: (context, index) {
+                return _buildCachedMessageItem(filteredCached, index, context);
+              },
+              itemCount: filteredCached.length,
+            );
           }
 
-          final message = snapshot.docs.reversed.toList();
-
-          // Filter out messages deleted for current user
-          final currentUserId = authService.currentUser!.uid;
-          final filteredMessages = message.where((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final List<dynamic> deletedFor = data['deletedFor'] ?? [];
-            return !deletedFor.contains(currentUserId);
-          }).toList();
-
-          if (filteredMessages.isEmpty) {
-            return const Center(child: Text('No Messages yet'));
+          if (error != null) {
+            return const Center(child: Text('Error loading messages'));
           }
 
-          return ListView.builder(
-            reverse: true,
-            controller: _scrollController,
-            itemBuilder: (context, index) {
-              return _buildMessageItemWithDate(
-                filteredMessages,
-                index,
-                context,
-              );
-            },
-            itemCount: filteredMessages.length,
-          );
+          return const Center(child: Text('No Messages yet'));
         },
       ),
     );
+  }
+
+  // Build message item from cached data
+  Widget _buildCachedMessageItem(
+    List<Map<String, dynamic>> messages,
+    int index,
+    BuildContext context,
+  ) {
+    final data = messages[index];
+    final bool isSender = data['senderID'] == authService.currentUser!.uid;
+    final messageId = data['docId'] ?? '';
+
+    // Convert timestamp from milliseconds if needed
+    dynamic timestamp = data['timestamp'];
+    if (timestamp is int) {
+      timestamp = Timestamp.fromMillisecondsSinceEpoch(timestamp);
+    }
+
+    final messageData = {...data, 'timestamp': timestamp};
+
+    // Store key for scroll-to-message
+    _messageKeys[messageId] = GlobalKey();
+
+    // Show date header if needed
+    Widget? dateHeader;
+    if (index == messages.length - 1 ||
+        !_isSameDay(
+          messages[index]['timestamp'],
+          messages[index + 1]['timestamp'],
+        )) {
+      dateHeader = _buildDateHeader(timestamp);
+    }
+
+    return Column(
+      key: _messageKeys[messageId],
+      children: [
+        if (dateHeader != null) dateHeader,
+        ChatBubble(
+          userId: data['senderID'] ?? '',
+          senderName: isSender ? 'You' : widget.receiverName,
+          alignment: isSender ? Alignment.centerRight : Alignment.centerLeft,
+          isSender: isSender,
+          data: messageData,
+          bubbleColor: isSender ? Colors.purpleAccent : Colors.grey,
+          messageId: messageId,
+          receiverId: widget.receiverId,
+          isHighlighted: _highlightedMessageId == messageId,
+          onReplyTap: (replyToId) => _scrollToMessage(replyToId),
+          onReply: () => _setReplyTo(
+            messageData,
+            messageId,
+            isSender ? 'You' : widget.receiverName,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Helper to check if two timestamps are on the same day
+  bool _isSameDay(dynamic ts1, dynamic ts2) {
+    DateTime d1, d2;
+    if (ts1 is int) {
+      d1 = DateTime.fromMillisecondsSinceEpoch(ts1);
+    } else if (ts1 is Timestamp) {
+      d1 = ts1.toDate();
+    } else {
+      return false;
+    }
+    if (ts2 is int) {
+      d2 = DateTime.fromMillisecondsSinceEpoch(ts2);
+    } else if (ts2 is Timestamp) {
+      d2 = ts2.toDate();
+    } else {
+      return false;
+    }
+    return d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
   }
 
   // BUILD SKELETON MESSAGES FOR LOADING STATE
@@ -591,7 +953,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final starredIds = starredAsync.value?.docs.map((e) => e.id).toSet() ?? {};
     final isStarred = starredIds.contains(doc.id);
 
+    // Get or create a GlobalKey for this message
+    _messageKeys.putIfAbsent(doc.id, () => GlobalKey());
+
     return ChatBubble(
+      key: _messageKeys[doc.id],
       senderName: name,
       messageId: doc.id,
       userId: data['senderID'],
@@ -601,7 +967,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       bubbleColor: bubbleColor,
       receiverId: widget.receiverId,
       isStarred: isStarred,
+      isHighlighted: _highlightedMessageId == doc.id,
       onReply: () => _setReplyTo(data, doc.id, name),
+      onReplyTap: _scrollToMessage,
     );
   }
 
@@ -612,139 +980,71 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       children: [
         Container(
           padding: const EdgeInsets.only(bottom: 20, left: 15, right: 15),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _selectedImageBytes != null
-                  // selected image preview
-                  ? _buildImageThumbnail()
-                  :
-                    // PLUS BUTTON
-                    InkWell(
-                      borderRadius: BorderRadius.circular(25),
-                      onTap: _toggleAttachments,
-                      child: Container(
-                        padding: EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondary,
-                          shape: BoxShape.circle,
-                        ),
-                        child: AnimatedRotation(
-                          turns: _showAttachments ? 0.125 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: Icon(
-                            Icons.add,
-                            size: 26,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-
-              const SizedBox(width: 10),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).inputDecorationTheme.fillColor ??
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.secondary,
-                      width: 2,
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Reply preview
-                      if (_replyingTo != null) _buildReplyPreview(),
-                      // Text field
-                      TextField(
-                        focusNode: _focusNode,
-                        controller: _messageController,
-                        autocorrect: true,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => sendMessage(),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: Colors.transparent,
-                          suffixIcon: _sendButton(context, sendMessage),
-                          hintText: _selectedImageBytes != null
-                              ? 'Add a caption...'
-                              : null,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+          child: _buildNormalInput(context),
         ),
 
-        // 2. THE ATTACHMENT DRAWER
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-          height: _showAttachments ? 120 : 0,
-          width: double.infinity,
-          clipBehavior: Clip.hardEdge,
-          decoration: BoxDecoration(),
-          child: SingleChildScrollView(
-            physics: const NeverScrollableScrollPhysics(),
-            child: Container(
-              height: 120,
-              padding: const EdgeInsets.only(top: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // gallery buttpn
-                  GestureDetector(
-                    onTap: () => _pickImage(),
-                    child: _buildAttachmentOption(Icons.image, "Gallery"),
-                  ),
-
-                  // camera button
-                  GestureDetector(
-                    onTap: () => _pickImage(),
-                    child: _buildAttachmentOption(Icons.camera_alt, "Camera"),
-                  ),
-
-                  // wallpaper button
-                  GestureDetector(
-                    onTap: () => _setWallpaper(),
-                    child: _buildAttachmentOption(
-                      Icons.wallpaper_rounded,
-                      "Wallpaper",
+        // 2. THE ATTACHMENT DRAWER (hidden when recording)
+        if (!_isRecording)
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            height: _showAttachments ? 120 : 0,
+            width: double.infinity,
+            clipBehavior: Clip.hardEdge,
+            decoration: BoxDecoration(),
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: Container(
+                height: 120,
+                padding: const EdgeInsets.only(top: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // gallery buttpn
+                    GestureDetector(
+                      onTap: () => _pickImage(),
+                      child: _buildAttachmentOption(Icons.image, "Gallery"),
                     ),
-                  ),
-                  _buildAttachmentOption(Icons.person_pin_rounded, "Contact"),
-                ],
+
+                    // camera button
+                    GestureDetector(
+                      onTap: () => _pickImage(),
+                      child: _buildAttachmentOption(Icons.camera_alt, "Camera"),
+                    ),
+
+                    // wallpaper button
+                    GestureDetector(
+                      onTap: () => _setWallpaper(),
+                      child: _buildAttachmentOption(
+                        Icons.wallpaper_rounded,
+                        "Wallpaper",
+                      ),
+                    ),
+                    _buildAttachmentOption(Icons.person_pin_rounded, "Contact"),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
       ],
     );
   }
 
   // REPLY PREVIEW WIDGET (inside TextField)
   Widget _buildReplyPreview() {
-    final isMedia =
-        _replyingTo!['type'] == 'image' || _replyingTo!['type'] == 'video';
-    final messageText = isMedia
-        ? (_replyingTo!['caption'] ?? '📷 Photo')
-        : _replyingTo!['message'];
+    final type = _replyingTo!['type'];
+    final isMedia = type == 'image' || type == 'video';
+    final isVoice = type == 'voice';
+
+    String messageText;
+    if (isVoice) {
+      messageText = '🎤 Voice message';
+    } else if (isMedia) {
+      messageText = _replyingTo!['caption'] ?? '📷 Photo';
+    } else {
+      messageText = _replyingTo!['message'];
+    }
 
     return Container(
       margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
@@ -802,6 +1102,114 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // Normal input (text field + plus button)
+  Widget _buildNormalInput(BuildContext context) {
+    // When recording, show only the VoiceRecorderButton (expanded)
+    if (_isRecording) {
+      return VoiceRecorderButton(
+        key: _voiceRecorderKey,
+        onRecordingComplete: (path, duration) {
+          setState(() => _isRecording = false);
+          _sendVoiceMessage(path, duration);
+        },
+        onRecordingStart: () {},
+        onRecordingCancel: () => setState(() => _isRecording = false),
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        _selectedImageBytes != null
+            // selected image preview
+            ? _buildImageThumbnail()
+            :
+              // PLUS BUTTON
+              InkWell(
+                borderRadius: BorderRadius.circular(25),
+                onTap: _toggleAttachments,
+                child: Container(
+                  padding: EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.secondary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: AnimatedRotation(
+                    turns: _showAttachments ? 0.125 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.add,
+                      size: 26,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+
+        const SizedBox(width: 10),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color:
+                  Theme.of(context).inputDecorationTheme.fillColor ??
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.secondary,
+                width: 2,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Reply preview
+                if (_replyingTo != null) _buildReplyPreview(),
+                // Text field
+                TextField(
+                  focusNode: _focusNode,
+                  controller: _messageController,
+                  autocorrect: true,
+                  textCapitalization: TextCapitalization.sentences,
+                  keyboardType: TextInputType.multiline,
+                  maxLines: 5,
+                  minLines: 1,
+                  textInputAction: TextInputAction.newline,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.transparent,
+                    hintText: _selectedImageBytes != null
+                        ? 'Add a caption...'
+                        : null,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    border: InputBorder.none,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Voice recorder or send button
+        const SizedBox(width: 8),
+        if (_hasText || _selectedImageBytes != null)
+          _sendButton(context, sendMessage)
+        else
+          VoiceRecorderButton(
+            key: _voiceRecorderKey,
+            onRecordingComplete: _sendVoiceMessage,
+            onRecordingStart: () => setState(() => _isRecording = true),
+            onRecordingCancel: () => setState(() => _isRecording = false),
+          ),
+      ],
     );
   }
 
@@ -873,16 +1281,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 Widget _sendButton(BuildContext context, void Function()? onTap) {
   return InkWell(
     onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.all(6),
-      child: Container(
-        padding: EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+    child: Container(
+      padding: EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary,
+        shape: BoxShape.circle,
       ),
+      child: Icon(Icons.send, color: Colors.white, size: 24),
     ),
   );
 }

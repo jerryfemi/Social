@@ -76,7 +76,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ontap: () => context.push('/blocked'),
                 ),
                 MyTile(
-                  title: 'Dark Mode',
+                  title: themeMode == ThemeMode.dark
+                      ? 'Light Mode'
+                      : 'Dark Mode',
                   leading: Icon(
                     themeMode == ThemeMode.dark
                         ? Icons.dark_mode
