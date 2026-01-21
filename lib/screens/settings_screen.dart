@@ -148,17 +148,25 @@ Widget profileView(BuildContext context, Map<String, dynamic> userData) {
                   ),
           ),
           SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // user name
-              Text(
-                userData['username'] ?? 'Unknown',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              // user email
-              Text(userData['email'] ?? ''),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // user name
+                Text(
+                  userData['username'] ?? 'Unknown',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // user email
+                Text(
+                  userData['email'] ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),

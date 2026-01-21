@@ -28,7 +28,7 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
   bool _isRecording = false;
   bool _isLocked = false;
   bool _isCancelled = false;
-  bool _isHolding = false; // Track if user is holding (long press)
+  bool _isHolding = false; 
   int _recordingSeconds = 0;
   Timer? _timer;
   double _dragOffsetX = 0;
@@ -293,11 +293,7 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
         color: Theme.of(context).colorScheme.primary,
         shape: BoxShape.circle,
       ),
-      child: Icon(
-        Icons.mic,
-        color: Colors.white,
-        size: 24,
-      ),
+      child: Icon(Icons.mic, color: Colors.white, size: 24),
     );
   }
 

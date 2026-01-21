@@ -680,7 +680,10 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                       ),
                       if (widget.isSender) ...[
                         const SizedBox(width: 3),
-                        StatusIcon(status: widget.data['status'] ?? 'read'),
+                        StatusIcon(
+                          status: widget.data['status'] ?? 'read',
+                          syncStatus: widget.data['syncStatus'],
+                        ),
                       ],
                     ],
                   ),
@@ -726,7 +729,10 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                       ),
                       if (widget.isSender) ...[
                         SizedBox(width: 4),
-                        StatusIcon(status: widget.data['status'] ?? 'read'),
+                        StatusIcon(
+                          status: widget.data['status'] ?? 'read',
+                          syncStatus: widget.data['syncStatus'],
+                        ),
                       ],
                     ],
                   ),
@@ -783,7 +789,10 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
               ),
               if (widget.isSender) ...[
                 SizedBox(width: 3),
-                StatusIcon(status: widget.data['status'] ?? 'read'),
+                StatusIcon(
+                  status: widget.data['status'] ?? 'read',
+                  syncStatus: widget.data['syncStatus'],
+                ),
               ],
             ],
           ),
@@ -795,12 +804,26 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
 
 class StatusIcon extends StatelessWidget {
   final String status;
-  const StatusIcon({super.key, required this.status});
+  final String? syncStatus;
+  const StatusIcon({super.key, required this.status, required this.syncStatus});
 
   @override
   Widget build(BuildContext context) {
     IconData? icon;
     Color? color;
+
+    if (syncStatus != null) {
+      if (syncStatus!.contains('pending') || syncStatus!.contains('syncing')) {
+        return Icon(
+          Icons.access_time,
+          size: 14,
+          color: Theme.of(context).colorScheme.inversePrimary,
+        );
+      }
+      if (syncStatus!.contains('failed')) {
+        return const Icon(Icons.error_outline, size: 16, color: Colors.red);
+      }
+    }
 
     switch (status) {
       case 'sent':
@@ -815,7 +838,7 @@ class StatusIcon extends StatelessWidget {
 
       case 'read':
         icon = Icons.done_all_rounded;
-        color = Colors.greenAccent;
+        color = Colors.blue;
         break;
     }
     return Icon(icon, size: 13, color: color);

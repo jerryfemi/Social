@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:social/services/hive_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -113,6 +114,7 @@ class AuthService {
 
   // sign out
   Future<void> signOut() async {
+    await HiveService().clearOnLogout();
     await _googleSignIn.signOut();
     await _auth.signOut();
   }

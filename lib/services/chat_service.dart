@@ -4,9 +4,10 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:social/models/message.dart';
+import 'package:social/models/message_hive.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/storage_service.dart';
+import 'package:uuid/uuid.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ChatService extends ChangeNotifier {
@@ -112,8 +113,9 @@ class ChatService extends ChangeNotifier {
   // send message
   Future<void> sendMessage(
     String receiverID,
-    message,
+    String message,
     String status, {
+    String? localId,
     String? replyToId,
     String? replyToMessage,
     String? replyToSender,
@@ -136,7 +138,8 @@ class ChatService extends ChangeNotifier {
       senderEmail: currentUserEmail,
       receiverID: receiverID,
       message: message,
-      timestamp: timestamp,
+      timestamp: timestamp.toDate(),
+      localId: localId ?? const Uuid().v4(),
       senderName: username,
       status: status,
       replyToId: replyToId,
@@ -154,7 +157,7 @@ class ChatService extends ChangeNotifier {
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection("Messages")
-        .add(newMessage.toMap());
+        .add(newMessage.toFirestoreMap());
 
     await _firestore
         .collection('Chat_rooms')
@@ -510,6 +513,7 @@ class ChatService extends ChangeNotifier {
     String? replyToId,
     String? replyToMessage,
     String? replyToSender,
+    String? localId,
     String? replyToType,
   }) async {
     final String currentUserID = _auth.currentUser!.uid;
@@ -544,13 +548,14 @@ class ChatService extends ChangeNotifier {
       senderName: username,
       receiverID: receiverID,
       message: voiceUrl,
-      timestamp: timestamp,
+      timestamp: timestamp.toDate(),
       type: 'voice',
       voiceDuration: duration,
       replyToId: replyToId,
       replyToMessage: replyToMessage,
       replyToSender: replyToSender,
       replyToType: replyToType,
+      localId: localId ?? const Uuid().v4(),
     );
 
     // add to firestore
@@ -558,7 +563,7 @@ class ChatService extends ChangeNotifier {
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection('Messages')
-        .add(message.toMap());
+        .add(message.toFirestoreMap());
 
     // update last message
     await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
@@ -582,6 +587,7 @@ class ChatService extends ChangeNotifier {
     Uint8List? imageBytes,
     String? caption,
     String? videoPath,
+    String? localId,
     String? replyToId,
     String? replyToMessage,
     String? replyToSender,
@@ -662,7 +668,8 @@ class ChatService extends ChangeNotifier {
       receiverID: receiverID,
       message: mediaUrl,
       caption: caption,
-      timestamp: timestamp,
+      localId: localId ?? const Uuid().v4(),
+      timestamp: timestamp.toDate(),
       type: type,
       thumbnailUrl: thumbnailUrl,
       replyToId: replyToId,
@@ -676,7 +683,7 @@ class ChatService extends ChangeNotifier {
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection('Messages')
-        .add(message.toMap());
+        .add(message.toFirestoreMap());
 
     // update last message
     String lastMsg = caption != null
@@ -805,7 +812,7 @@ class ChatService extends ChangeNotifier {
     }, SetOptions(merge: true));
   }
 
-  /// Stream to listen for typing status of other user
+  // Stream to listen for typing status of other user
   Stream<bool> getTypingStatus(String receiverId) {
     final currentUserId = _auth.currentUser!.uid;
 

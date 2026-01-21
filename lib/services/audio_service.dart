@@ -16,8 +16,18 @@ class AudioService {
   factory AudioService() => _instance;
 
   // Private constructor
-  AudioService._internal();
+  AudioService._internal() {
+    // FIX: Listeners initialized ONCE here to prevent memory leaks
+    player.onPlayerComplete.listen((_) {
+      _isPlaying = false;
+      _currentlyPlayingUrl = null;
+      debugPrint('Global Player: Playback complete');
+    });
 
+    player.onPlayerStateChanged.listen((state) {
+      _isPlaying = state == PlayerState.playing;
+    });
+  }
   // Lazy initialization of recorder and player
   AudioRecorder? _recorder;
   AudioPlayer? _player;
@@ -186,16 +196,58 @@ class AudioService {
 
       _isPlaying = true;
       _currentlyPlayingUrl = url;
-
-      // Listen for completion
-      player.onPlayerComplete.listen((_) {
-        _isPlaying = false;
-        _currentlyPlayingUrl = null;
-      });
     } catch (e) {
       debugPrint('Error playing audio: $e');
     }
   }
+
+/// Play audio from local file OR URL
+Future<void> playSource(String source, {bool isLocal = false}) async {
+  try {
+    // If same audio is playing, pause it
+    if (_isPlaying && _currentlyPlayingUrl == source) {
+      await pause();
+      return;
+    }
+
+    // If different audio, stop current and play new
+    if (_currentlyPlayingUrl != source) {
+      await stop();
+    }
+
+    if (isLocal) {
+      // Play from local file
+      debugPrint('Playing from local file: $source');
+      await player.play(DeviceFileSource(source));
+    } else {
+      // Play from URL (with caching)
+      File? cachedFile;
+      try {
+        final fileInfo = await DefaultCacheManager().getFileFromCache(source);
+        if (fileInfo != null) {
+          cachedFile = fileInfo.file;
+          debugPrint('Playing from cache: ${cachedFile.path}');
+        } else {
+          cachedFile = await DefaultCacheManager().getSingleFile(source);
+          debugPrint('Downloaded and cached: ${cachedFile.path}');
+        }
+      } catch (e) {
+        debugPrint('Cache failed, trying URL source: $e');
+      }
+
+      if (cachedFile != null && await cachedFile.exists()) {
+        await player.play(DeviceFileSource(cachedFile.path));
+      } else {
+        await player.play(UrlSource(source));
+      }
+    }
+
+    _isPlaying = true;
+    _currentlyPlayingUrl = source;
+  } catch (e) {
+    debugPrint('Error playing audio: $e');
+  }
+}
 
   /// Pause playback
   Future<void> pause() async {

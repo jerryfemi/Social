@@ -6,6 +6,7 @@ import 'package:social/services/audio_service.dart';
 class VoiceMessageBubble extends StatefulWidget {
   final String audioUrl;
   final int duration;
+  final String? localFilPath;
   final bool isSender;
   final Color bubbleColor;
   final String textTime;
@@ -13,6 +14,7 @@ class VoiceMessageBubble extends StatefulWidget {
   const VoiceMessageBubble({
     super.key,
     required this.audioUrl,
+    this.localFilPath,
     required this.duration,
     required this.isSender,
     required this.bubbleColor,
@@ -127,7 +129,13 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     if (_isPlaying) {
       await _audioService.pause();
     } else {
-      await _audioService.play(widget.audioUrl);
+      final localPath = widget.localFilPath;
+      final isLocal = localPath != null && localPath.isNotEmpty;
+
+      AudioService().playSource(
+        isLocal ? localPath : widget.audioUrl,
+        isLocal: isLocal,
+      );
     }
   }
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -11,15 +10,16 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime/mime.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:social/models/message.dart';
+import 'package:social/providers/chat_message_provider.dart';
 import 'package:social/services/auth_service.dart';
-import 'package:social/services/cache_service.dart';
 import 'package:social/services/notification_service.dart';
 import 'package:social/providers/chat_provider.dart';
 import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/chat_bubble.dart';
 import 'package:social/widgets/voice_recorder_button.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+
+import '../models/message_hive.dart' as hive_model;
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String receiverName;
@@ -65,12 +65,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _highlightedMessageId;
   final Map<String, GlobalKey> _messageKeys = {};
 
-  // Cache debounce - only cache once per session unless messages change
-  int _lastCachedMessageCount = 0;
+ 
 
   // Typing indicator
   Timer? _typingTimer;
   bool _isTyping = false;
+
+  // Helper method to get chat room ID
+  String _getChatRoomId(String userId1, String userId2) {
+    final ids = [userId1, userId2]..sort();
+    return ids.join('_');
+  }
 
   @override
   void initState() {
@@ -177,36 +182,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  // Format last seen timestamp
-  String _formatLastSeen(dynamic timestamp) {
-    DateTime lastSeenTime;
-
-    if (timestamp is Timestamp) {
-      lastSeenTime = timestamp.toDate();
-    } else if (timestamp is int) {
-      lastSeenTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    } else {
-      return '';
-    }
-
-    final now = DateTime.now();
-    final difference = now.difference(lastSeenTime);
-
-    if (difference.inMinutes < 1) {
-      return 'Last seen just now';
-    } else if (difference.inMinutes < 60) {
-      return 'Last seen ${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return 'Last seen ${difference.inHours}h ago';
-    } else if (difference.inDays == 1) {
-      return 'Last seen yesterday';
-    } else if (difference.inDays < 7) {
-      return 'Last seen ${difference.inDays}d ago';
-    } else {
-      return 'Last seen ${lastSeenTime.day}/${lastSeenTime.month}/${lastSeenTime.year}';
-    }
-  }
-
   // Scroll to a specific message and highlight it
   void _scrollToMessage(String messageId) {
     final key = _messageKeys[messageId];
@@ -252,37 +227,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final replyToSender = _replyingToSender;
     final replyToType = _replyingTo?['type'] as String? ?? 'text';
 
+    // get chat room Id
+    final currentUserId = authService.currentUser!.uid;
+    final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
+    final notifier = ref.read(chatMessagesProvider(chatRoomId).notifier);
+
     try {
       if (imageBytes != null) {
         // SEND MEDIA
-        ref
-            .read(chatServiceProvider)
-            .sendMediaMessage(
-              widget.receiverId,
-              mediaName ?? (isVideo ? 'video.mp4' : 'image.jpg'),
-              imageBytes: isVideo ? null : imageBytes,
-              videoPath: isVideo ? videoPath : null,
-              caption: text.isNotEmpty ? text : null,
-              replyToId: replyToId,
-              replyToMessage: replyToMessage,
-              replyToSender: replyToSender,
-              replyToType: replyToType,
-            )
-            .catchError((e) {});
+        await notifier.sendMediaMessage(
+        receiverId: widget.receiverId,
+        receiverName: widget.receiverName,
+        fileName: mediaName ?? (isVideo ? 'video.mp4' : 'image.jpg'),
+        imageBytes: isVideo ? null : imageBytes,
+        videoPath: isVideo ? videoPath : null,
+        caption: text.isNotEmpty ? text : null,
+        replyToId: replyToId,
+        replyToMessage: replyToMessage,
+        replyToSender: replyToSender,
+        replyToType: replyToType,
+      );
+
         _clearImage();
       } else {
         // send message
-        ref
-            .read(chatServiceProvider)
-            .sendMessage(
-              widget.receiverId,
-              _messageController.text.trim(),
-              MessageStatus.sent,
-              replyToId: replyToId,
-              replyToMessage: replyToMessage,
-              replyToSender: replyToSender,
-              replyToType: replyToType,
-            );
+        await notifier.sendTextMessage(
+        receiverId: widget.receiverId,
+        receiverName: widget.receiverName,
+        text: text,
+        replyToId: replyToId,
+        replyToMessage: replyToMessage,
+        replyToSender: replyToSender,
+        replyToType: replyToType,
+      );
+
       }
 
       // clear textfield and reply
@@ -305,18 +283,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final replyToSender = _replyingToSender;
     final replyToType = _replyingTo?['type'] as String? ?? 'text';
 
+    // get chat room id
+    final currentUserId = authService.currentUser!.uid;
+  final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
+  final notifier = ref.read(chatMessagesProvider(chatRoomId).notifier);
+
+
     try {
-      await ref
-          .read(chatServiceProvider)
-          .sendVoiceMessage(
-            widget.receiverId,
-            voicePath,
-            duration,
-            replyToId: replyToId,
-            replyToMessage: replyToMessage,
-            replyToSender: replyToSender,
-            replyToType: replyToType,
-          );
+         await notifier.sendVoiceMessage(
+      receiverId: widget.receiverId,
+      receiverName: widget.receiverName,
+      localPath: voicePath,
+      duration: duration,
+      replyToId: replyToId,
+      replyToMessage: replyToMessage,
+      replyToSender: replyToSender,
+      replyToType: replyToType,
+    );
+
 
       // Clear reply
       _clearReply();
@@ -494,45 +478,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<AsyncValue<QuerySnapshot>>(messageProvider(widget.receiverId), (
-      previous,
-      next,
-    ) {
-      next.whenData((snapshot) {
-        if (!mounted) return;
+    // ============ NEW: Listen to Hive-first provider ============
+    final currentUserId = authService.currentUser!.uid;
+    final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
 
-        // Mark messages as read
-        Future.delayed(Duration.zero, () {
-          ref
-              .read(chatServiceProvider)
-              .messageRead(authService.currentUser!.uid, widget.receiverId);
+    ref.listen<AsyncValue<List<hive_model.Message>>>(
+      chatMessagesProvider(chatRoomId),
+      (previous, next) {
+        next.whenData((messages) {
+          if (!mounted) return;
+
+          // Mark messages as read
+          Future.delayed(Duration.zero, () {
+            ref
+                .read(chatServiceProvider)
+                .messageRead(currentUserId, widget.receiverId);
+          });
+
+          // Auto-scroll when new messages arrive
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (_scrollController.hasClients) {
+              _scrollDown();
+            }
+          });
         });
-
-        // Cache messages for offline viewing (only if count changed)
-        if (snapshot.docs.isNotEmpty &&
-            snapshot.docs.length != _lastCachedMessageCount) {
-          _lastCachedMessageCount = snapshot.docs.length;
-          final currentUserId = authService.currentUser!.uid;
-          final messagesToCache = snapshot.docs.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return {...data, 'docId': doc.id};
-          }).toList();
-          CacheService.cacheChatMessages(
-            currentUserId,
-            widget.receiverId,
-            messagesToCache,
-          );
-        }
-      });
-
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollDown();
-        }
-      });
-    });
+      },
+    );
+    // ============================================================
 
     final chatRoomAsync = ref.watch(chatStreamProvider(widget.receiverId));
+    final dateUtil = DateUtil();
 
     return Scaffold(
       appBar: AppBar(
@@ -631,7 +606,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       final lastSeen = onlineData?['lastSeen'];
                       if (lastSeen != null) {
                         return Text(
-                          _formatLastSeen(lastSeen),
+                          dateUtil.formatLastSeen(lastSeen),
                           style: TextStyle(
                             fontSize: 12,
                             color: Theme.of(
@@ -669,7 +644,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           return Container(
             decoration: BoxDecoration(
               image: wallpaperUrl != null
-                  ? DecorationImage(
+                  ? DecorationImage( 
                       image: CachedNetworkImageProvider(wallpaperUrl),
                       fit: BoxFit.cover,
                     )
@@ -690,164 +665,88 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   // build message list
   Widget _buildMessageList() {
-    final messageAsync = ref.watch(messageProvider(widget.receiverId));
-    final cachedMessages = ref.watch(cachedMessagesProvider(widget.receiverId));
+    final currentUserId = authService.currentUser!.uid;
+    final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
+
+    final messagesAsync = ref.watch(chatMessagesProvider(chatRoomId));
 
     return Padding(
       padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
-      child: Builder(
-        builder: (context) {
-          final cached = cachedMessages.value;
+      child: messagesAsync.when(
+        // Loading state (only shows on first load when Hive is empty)
+        loading: () => _buildSkeletonMessages(),
 
-          // Only show skeleton when truly no data (not in cache)
-          if (messageAsync.isLoading &&
-              !messageAsync.hasValue &&
-              (cached == null || cached.isEmpty)) {
-            return _buildSkeletonMessages();
+        // Error state
+        error: (error, stack) => Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 16),
+              Text('Error loading messages'),
+              const SizedBox(height: 8),
+              Text(error.toString(), style: TextStyle(fontSize: 12)),
+            ],
+          ),
+        ),
+
+        // Data state - messages loaded from Hive
+        data: (messages) {
+          if (messages.isEmpty) {
+            return const Center(child: Text('No Messages yet'));
           }
 
-          final snapshot = messageAsync.value;
-          final error = messageAsync.error;
+          // Messages are already sorted (oldest first) from HiveService
+          // Reverse for UI display (newest at bottom)
+          final reversedMessages = messages.reversed.toList();
 
-          // If we have live data, use it
-          if (snapshot != null && snapshot.docs.isNotEmpty) {
-            final currentUserId = authService.currentUser!.uid;
-            final message = snapshot.docs.reversed.toList();
-
-            // Filter out messages deleted for current user
-            final filteredMessages = message.where((doc) {
-              final data = doc.data() as Map<String, dynamic>;
-              final List<dynamic> deletedFor = data['deletedFor'] ?? [];
-              return !deletedFor.contains(currentUserId);
-            }).toList();
-
-            if (filteredMessages.isEmpty) {
-              return const Center(child: Text('No Messages yet'));
-            }
-
-            return ListView.builder(
-              reverse: true,
-              controller: _scrollController,
-              itemBuilder: (context, index) {
-                return _buildMessageItemWithDate(
-                  filteredMessages,
-                  index,
-                  context,
-                );
-              },
-              itemCount: filteredMessages.length,
-            );
-          }
-
-          // Fall back to cached data while loading
-          if (cached != null && cached.isNotEmpty) {
-            final currentUserId = authService.currentUser!.uid;
-            final reversedCached = cached.reversed.toList();
-
-            // Filter out messages deleted for current user
-            final filteredCached = reversedCached.where((msg) {
-              final List<dynamic> deletedFor = msg['deletedFor'] ?? [];
-              return !deletedFor.contains(currentUserId);
-            }).toList();
-
-            if (filteredCached.isEmpty) {
-              return const Center(child: Text('No Messages yet'));
-            }
-
-            return ListView.builder(
-              reverse: true,
-              controller: _scrollController,
-              itemBuilder: (context, index) {
-                return _buildCachedMessageItem(filteredCached, index, context);
-              },
-              itemCount: filteredCached.length,
-            );
-          }
-
-          if (error != null) {
-            return const Center(child: Text('Error loading messages'));
-          }
-
-          return const Center(child: Text('No Messages yet'));
+          return ListView.builder(
+            reverse: true,
+            controller: _scrollController,
+            itemCount: reversedMessages.length,
+            itemBuilder: (context, index) {
+              return _buildHiveMessageItemWithDate(
+                reversedMessages,
+                index,
+                context,
+              );
+            },
+          );
         },
       ),
     );
   }
 
-  // Build message item from cached data
-  Widget _buildCachedMessageItem(
-    List<Map<String, dynamic>> messages,
+  Widget _buildHiveMessageItemWithDate(
+    List<hive_model.Message> messages,
     int index,
     BuildContext context,
   ) {
-    final data = messages[index];
-    final bool isSender = data['senderID'] == authService.currentUser!.uid;
-    final messageId = data['docId'] ?? '';
+    final message = messages[index];
+    final messageDate = message.timestamp;
 
-    // Convert timestamp from milliseconds if needed
-    dynamic timestamp = data['timestamp'];
-    if (timestamp is int) {
-      timestamp = Timestamp.fromMillisecondsSinceEpoch(timestamp);
-    }
+    bool showHeader = false;
 
-    final messageData = {...data, 'timestamp': timestamp};
+    // If it's the last message (oldest), show header
+    if (index == messages.length - 1) {
+      showHeader = true;
+    } else {
+      // Check if date is different from next message
+      final nextMessage = messages[index + 1];
+      final nextDate = nextMessage.timestamp;
 
-    // Store key for scroll-to-message
-    _messageKeys[messageId] = GlobalKey();
-
-    // Show date header if needed
-    Widget? dateHeader;
-    if (index == messages.length - 1 ||
-        !_isSameDay(
-          messages[index]['timestamp'],
-          messages[index + 1]['timestamp'],
-        )) {
-      dateHeader = _buildDateHeader(timestamp);
+      if (!DateUtil.isSameDay(messageDate, nextDate)) {
+        showHeader = true;
+      }
     }
 
     return Column(
-      key: _messageKeys[messageId],
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (dateHeader != null) dateHeader,
-        ChatBubble(
-          userId: data['senderID'] ?? '',
-          senderName: isSender ? 'You' : widget.receiverName,
-          alignment: isSender ? Alignment.centerRight : Alignment.centerLeft,
-          isSender: isSender,
-          data: messageData,
-          bubbleColor: isSender ? Colors.purpleAccent : Colors.grey,
-          messageId: messageId,
-          receiverId: widget.receiverId,
-          isHighlighted: _highlightedMessageId == messageId,
-          onReplyTap: (replyToId) => _scrollToMessage(replyToId),
-          onReply: () => _setReplyTo(
-            messageData,
-            messageId,
-            isSender ? 'You' : widget.receiverName,
-          ),
-        ),
+        if (showHeader) _buildDateHeader(messageDate),
+        _buildHiveMessageItem(message, context),
       ],
     );
-  }
-
-  // Helper to check if two timestamps are on the same day
-  bool _isSameDay(dynamic ts1, dynamic ts2) {
-    DateTime d1, d2;
-    if (ts1 is int) {
-      d1 = DateTime.fromMillisecondsSinceEpoch(ts1);
-    } else if (ts1 is Timestamp) {
-      d1 = ts1.toDate();
-    } else {
-      return false;
-    }
-    if (ts2 is int) {
-      d2 = DateTime.fromMillisecondsSinceEpoch(ts2);
-    } else if (ts2 is Timestamp) {
-      d2 = ts2.toDate();
-    } else {
-      return false;
-    }
-    return d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
   }
 
   // BUILD SKELETON MESSAGES FOR LOADING STATE
@@ -878,45 +777,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  Widget _buildMessageItemWithDate(
-    List<QueryDocumentSnapshot> docs,
-    int index,
-    BuildContext context,
-  ) {
-    final doc = docs[index];
-    final data = doc.data() as Map<String, dynamic>;
-
-    // get timestamp
-    Timestamp t = data['timestamp'];
-    DateTime messageDate = t.toDate();
-
-    bool showHeader = false;
-
-    // if its the last message ever show header
-    if (index == docs.length - 1) {
-      showHeader = true;
-    } else {
-      // otherwise check next message (which is older)
-      final nextDoc = docs[index + 1];
-      final nextData = nextDoc.data() as Map<String, dynamic>;
-      Timestamp nextT = nextData['timestamp'];
-      DateTime nextDate = nextT.toDate();
-
-      // if days are different show header
-      if (!DateUtil.isSameDay(messageDate, nextDate)) {
-        showHeader = true;
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (showHeader) _buildDateHeader(messageDate),
-        _buildMessageItem(doc, context),
-      ],
-    );
-  }
-
   // build date header
   Widget _buildDateHeader(DateTime date) {
     return Center(
@@ -936,41 +796,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   // build message item list
-  Widget _buildMessageItem(DocumentSnapshot doc, BuildContext context) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-
-    bool isSender = data['senderID'] == authService.currentUser!.uid;
-
-    //  Align based on sender
-    var alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
-
-    //  Color formatting to make it easier to see
-    var bubbleColor = isSender ? Colors.purpleAccent : Colors.grey;
-
+  Widget _buildHiveMessageItem(
+    hive_model.Message message,
+    BuildContext context,
+  ) {
+    final currentUserId = authService.currentUser!.uid;
+    final isSender = message.senderID == currentUserId;
+    final alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
+    final bubbleColor = isSender ? Colors.purpleAccent : Colors.grey;
     final name = isSender ? 'You' : widget.receiverName;
 
+    // Get starred status (still using old provider for now)
     final starredAsync = ref.watch(starredMessagesProvider);
     final starredIds = starredAsync.value?.docs.map((e) => e.id).toSet() ?? {};
-    final isStarred = starredIds.contains(doc.id);
+    final isStarred =
+        message.fireStoreId != null && starredIds.contains(message.fireStoreId);
 
-    // Get or create a GlobalKey for this message
-    _messageKeys.putIfAbsent(doc.id, () => GlobalKey());
+    // Store key for scroll-to-message
+    final messageKey = message.localId;
+    _messageKeys.putIfAbsent(messageKey, () => GlobalKey());
+
+    // Convert Hive message to Map for ChatBubble (temporary compatibility)
+    final messageData = _convertHiveMessageToMap(message);
 
     return ChatBubble(
-      key: _messageKeys[doc.id],
+      key: _messageKeys[messageKey],
       senderName: name,
-      messageId: doc.id,
-      userId: data['senderID'],
+      messageId: message.localId,
+      userId: message.senderID,
       alignment: alignment,
       isSender: isSender,
-      data: data,
+      data: messageData,
       bubbleColor: bubbleColor,
       receiverId: widget.receiverId,
       isStarred: isStarred,
-      isHighlighted: _highlightedMessageId == doc.id,
-      onReply: () => _setReplyTo(data, doc.id, name),
+      isHighlighted: _highlightedMessageId == messageKey,
+      onReply: () => _setReplyTo(messageData, messageKey, name),
       onReplyTap: _scrollToMessage,
     );
+  }
+
+  // ============ Helper: Convert Hive Message to Map ============
+  Map<String, dynamic> _convertHiveMessageToMap(hive_model.Message msg) {
+    return {
+      'senderID': msg.senderID,
+      'senderEmail': msg.senderEmail,
+      'senderName': msg.senderName,
+      'receiverId': msg.receiverID,
+      'message': msg.message,
+      'timestamp': Timestamp.fromDate(
+        msg.timestamp,
+      ), 
+      'type': msg.type,
+      'caption': msg.caption,
+      'status': msg.status,
+      'replyToId': msg.replyToId,
+      'replyToMessage': msg.replyToMessage,
+      'replyToSender': msg.replyToSender,
+      'replyToType': msg.replyToType,
+      'voiceDuration': msg.voiceDuration,
+      'thumbnailUrl': msg.thumbnailUrl,
+      'isEdited': msg.isEdited,
+      'editedAt': msg.editedAt != null
+          ? Timestamp.fromDate(msg.editedAt!)
+          : null,
+      'deletedFor': msg.deletedFor,
+      'localFilePath': msg.localFilePath, 
+      'syncStatus': msg.syncStatus.toString(), 
+    };
   }
 
   // build message input

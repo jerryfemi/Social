@@ -4,11 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:skeletonizer/src/utils/bone_mock.dart';
 import 'package:social/providers/chat_provider.dart';
+import 'package:social/providers/recents_chats_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/chat_service.dart';
 import 'package:social/services/notification_service.dart';
+import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/chat_bubble.dart';
 import 'package:social/widgets/my_sliver_app_bar.dart';
 import 'package:social/widgets/search_bar.dart';
@@ -78,16 +79,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<List<Map<String, dynamic>>> homeStreamAsync =
-        _searchQuery.isEmpty
-        ? ref.watch(recentChatsProvider)
-        : ref.watch(searchUsersProvider(_searchQuery));
-
-    // Get cached data for initial display
-    final cachedChats = _searchQuery.isEmpty
-        ? ref.watch(cachedRecentChatsProvider)
-        : const AsyncValue<List<Map<String, dynamic>>?>.data(null);
-
     return Scaffold(
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
@@ -109,16 +100,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
 
           // CONTENT
-          // Show cached data immediately, only show skeleton when truly no data
           Builder(
             builder: (context) {
-              // Get cached data if available
-              final cached = cachedChats.value;
+              final chatList = _searchQuery.isEmpty
+                  ? ref.watch(recentChatsProvider)
+                  : ref.watch(searchUsersProvider(_searchQuery)).value ?? [];
 
-              // Only show skeleton when loading AND no cached data AND no stream data
-              if (homeStreamAsync.isLoading &&
-                  !homeStreamAsync.hasValue &&
-                  (cached == null || cached.isEmpty)) {
+              if (chatList.isEmpty) {
                 return Skeletonizer.sliver(
                   enabled: true,
                   child: SliverList(
@@ -140,16 +128,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 );
               }
 
-              // Use fresh data if available, otherwise fall back to cached data
-              final chats = homeStreamAsync.value ?? cached ?? [];
-              final error = homeStreamAsync.error;
-
-              // Only show error if there's no data to display at all
-              if (error != null && chats.isEmpty) {
-                return SliverFillRemaining(
-                  child: const Center(child: Text('Error')),
-                );
-              }
+              final chats = chatList;
 
               if (chats.isEmpty) {
                 return _buildEmptyState(context);
@@ -165,47 +144,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   // -------------------------------------------EXTRACTED--------------------------------------------
 
-  // Format message time for display
-  String _formatMessageTime(dynamic timestamp) {
-    DateTime messageTime;
-
-    if (timestamp is int) {
-      messageTime = DateTime.fromMillisecondsSinceEpoch(timestamp);
-    } else if (timestamp != null &&
-        timestamp.runtimeType.toString().contains('Timestamp')) {
-      messageTime = (timestamp as dynamic).toDate();
-    } else {
-      return '';
-    }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final messageDate = DateTime(
-      messageTime.year,
-      messageTime.month,
-      messageTime.day,
-    );
-
-    if (messageDate == today) {
-      // Today - show time only
-      final hour = messageTime.hour;
-      final minute = messageTime.minute.toString().padLeft(2, '0');
-      final period = hour >= 12 ? 'PM' : 'AM';
-      final hour12 = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-      return '$hour12:$minute $period';
-    } else if (messageDate == today.subtract(const Duration(days: 1))) {
-      // Yesterday
-      return 'Yesterday';
-    } else if (now.difference(messageTime).inDays < 7) {
-      // Within last week - show day name
-      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return days[messageTime.weekday - 1];
-    } else {
-      // Older - show date
-      return '${messageTime.day}/${messageTime.month}/${messageTime.year}';
-    }
-  }
-
   // BUILD CONTENT6
   Widget _buildContent(
     BuildContext context,
@@ -215,6 +153,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       delegate: SliverChildBuilderDelegate((context, index) {
         final userData = dataList[index];
         bool isMe = userData['lastSenderId'] == authService.currentUser!.uid;
+        final dateUtil = DateUtil();
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: UserTile(
@@ -226,7 +166,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 (_searchQuery.isEmpty &&
                     userData['lastMessageTimestamp'] != null)
                 ? Text(
-                    _formatMessageTime(userData['lastMessageTimestamp']),
+                    dateUtil.formatMessageTime(
+                      userData['lastMessageTimestamp'],
+                    ),
                     style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(
@@ -248,6 +190,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                         Padding(
                           padding: const EdgeInsets.only(right: 6),
                           child: StatusIcon(
+                            syncStatus: null,
                             status: userData['lastMessageStatus'],
                           ),
                         ),
