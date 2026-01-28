@@ -2,23 +2,29 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social/services/audio_service.dart';
+import 'package:social/widgets/chat_bubble.dart';
+import 'package:social/widgets/liquid_glass.dart';
 
 class VoiceMessageBubble extends StatefulWidget {
   final String audioUrl;
+  final String syncStatus;
   final int duration;
-  final String? localFilPath;
+  final String? localFilePath;
   final bool isSender;
   final Color bubbleColor;
   final String textTime;
+  final String status;
 
   const VoiceMessageBubble({
     super.key,
     required this.audioUrl,
-    this.localFilPath,
+    this.localFilePath,
     required this.duration,
     required this.isSender,
     required this.bubbleColor,
     required this.textTime,
+    required this.status,
+    required this.syncStatus,
   });
 
   @override
@@ -121,6 +127,10 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
 
   @override
   void dispose() {
+    // Stop playing if this specific bubble is playing
+    if (_isPlaying) {
+      _audioService.stop();
+    }
     _scrubberScaleController.dispose();
     super.dispose();
   }
@@ -129,7 +139,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     if (_isPlaying) {
       await _audioService.pause();
     } else {
-      final localPath = widget.localFilPath;
+      final localPath = widget.localFilePath;
       final isLocal = localPath != null && localPath.isNotEmpty;
 
       AudioService().playSource(
@@ -139,7 +149,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     }
   }
 
-  /// Calculate seek position from local x coordinate
+  // Calculate seek position from local x coordinate
   Duration _getSeekPosition(double localX, double width) {
     final percentage = (localX / width).clamp(0.0, 1.0);
     return Duration(
@@ -147,7 +157,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     );
   }
 
-  /// Handle seek start (tap down or drag start)
+  // Handle seek start (tap down or drag start)
   void _onSeekStart(double localX, double width) {
     HapticFeedback.selectionClick();
     _scrubberScaleController.forward();
@@ -159,7 +169,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     });
   }
 
-  /// Handle seek update (drag)
+  // Handle seek update (drag)
   void _onSeekUpdate(double localX, double width) {
     final percentage = (localX / width).clamp(0.0, 1.0);
     setState(() {
@@ -245,16 +255,21 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
           // Play/Pause button
           GestureDetector(
             onTap: _togglePlayPause,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                _isPlaying ? Icons.pause : Icons.play_arrow,
-                color: Colors.white,
-                size: 24,
+            child: LiquidGlass(
+              borderRadius: 30,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  // color: Colors.white.withValues(alpha: 0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _isPlaying ? Icons.pause : Icons.play_arrow,
+                  color: _isPlaying
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.white,
+                  size: 24,
+                ),
               ),
             ),
           ),
@@ -325,12 +340,24 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
                         ),
                       ),
                     ),
-                    Text(
-                      widget.textTime,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.white.withValues(alpha: 0.7),
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.textTime,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                        ),
+                        if (widget.isSender) ...[
+                          const SizedBox(width: 4),
+                          StatusIcon(
+                            status: widget.status,
+                            syncStatus: widget.syncStatus,
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),

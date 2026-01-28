@@ -87,7 +87,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   trailing: Switch(
                     value: themeMode == ThemeMode.dark,
                     onChanged: (_) =>
-                        ref.read(themeModeProvider.notifier).toggle(),
+                        ref.read(themeModeProvider.notifier).toggleTheme(),
                   ),
                 ),
                 Spacer(),
@@ -96,7 +96,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   leading: Icon(Icons.logout),
                   ontap: _signOut,
                 ),
-                SizedBox(height: 10),
+                SizedBox(height: 80),
               ],
             ),
           );
@@ -109,67 +109,67 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 // profile view
 Widget profileView(BuildContext context, Map<String, dynamic> userData) {
   return InkWell(
-    borderRadius: BorderRadius.circular(12),
-    onTap: () => context.push('/profile'),
-    child: Container(
-      padding: EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondary,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          // profile photo
-          ClipOval(
-            child:
-                userData['profileImage'] != null &&
-                    userData['profileImage'].isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: userData['profileImage'],
-                    width: 80,
-                    height: 80,
-                    fit: BoxFit.cover,
-                    placeholder: (context, url) =>
-                        const CircularProgressIndicator(),
-                    errorWidget: (context, url, error) => Icon(
-                      Icons.person,
-                      size: 50,
-                      color: Theme.of(context).colorScheme.tertiary,
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push('/profile'),
+      child: Container(
+        padding: EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          // color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            // profile photo
+            ClipOval(
+              child:
+                  userData['profileImage'] != null &&
+                      userData['profileImage'].isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: userData['profileImage'],
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) =>
+                          const CircularProgressIndicator(),
+                      errorWidget: (context, url, error) => Icon(
+                        Icons.person,
+                        size: 50,
+                        color: Theme.of(context).colorScheme.tertiary,
+                      ),
+                    )
+                  : CircleAvatar(
+                      backgroundColor: Theme.of(context).colorScheme.secondary,
+                      radius: 40,
+                      child: Icon(
+                        Icons.person,
+                        size: 40,
+                        color: Theme.of(context).colorScheme.tertiary,
+                      ),
                     ),
-                  )
-                : CircleAvatar(
-                    backgroundColor: Theme.of(context).colorScheme.secondary,
-                    radius: 40,
-                    child: Icon(
-                      Icons.person,
-                      size: 40,
-                      color: Theme.of(context).colorScheme.tertiary,
-                    ),
-                  ),
-          ),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // user name
-                Text(
-                  userData['username'] ?? 'Unknown',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                // user email
-                Text(
-                  userData['email'] ?? '',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
             ),
-          ),
-        ],
-      ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // user name
+                  Text(
+                    userData['username'] ?? 'Unknown',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  // user email
+                  Text(
+                    userData['email'] ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
     ),
   );
 }

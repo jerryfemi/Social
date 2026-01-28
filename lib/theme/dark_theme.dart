@@ -5,7 +5,7 @@ final ThemeData darkMode = (() {
     surface: Color.fromARGB(255, 23, 23, 23),
     primary: Color.fromARGB(255, 28, 100, 218),
     secondary: Color.fromARGB(255, 30, 30, 31),
-    tertiary:  Color.fromARGB(255, 66, 66, 66),
+    tertiary: Color.fromARGB(255, 66, 66, 66),
     tertiaryContainer: Color.fromARGB(255, 117, 117, 117),
     inversePrimary: Colors.white60,
   );
@@ -18,12 +18,11 @@ final ThemeData darkMode = (() {
     bottomNavigationBarTheme: BottomNavigationBarThemeData(
       backgroundColor: colorScheme.surface,
     ),
-    snackBarTheme: SnackBarThemeData(backgroundColor: colorScheme.primary,),
+    snackBarTheme: SnackBarThemeData(backgroundColor: colorScheme.primary),
     appBarTheme: AppBarTheme(
       backgroundColor: colorScheme.secondary,
       elevation: 0,
     ),
-    bottomAppBarTheme: BottomAppBarTheme(color: colorScheme.secondary),
 
     textTheme: Typography.whiteCupertino,
   );

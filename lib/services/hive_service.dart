@@ -16,13 +16,21 @@ class HiveService {
 
   // INITIALIZATION
   Future<void> init() async {
+    debugPrint('✅ HiveService initialized');
+  }
+
+  // Open user-specific recents box
+  Future<void> initRecentsForUser(String userId) async {
     try {
-      // open recents chat box
-      _recentChatsBox = await Hive.openBox<Map>('recents_chats');
-      debugPrint('✅ HiveService initialized');
+      // Close existing if open (and different)
+      if (_recentChatsBox != null && _recentChatsBox!.isOpen) {
+        await _recentChatsBox!.close();
+      }
+
+      _recentChatsBox = await Hive.openBox<Map>('recents_chats_$userId');
+      debugPrint('📦 Opened recents box for user: $userId');
     } catch (e) {
-      debugPrint('❌ HiverService init error: $e');
-      rethrow;
+      debugPrint('❌ Error opening user recents box: $e');
     }
   }
 

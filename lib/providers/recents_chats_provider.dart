@@ -15,6 +15,8 @@ final recentChatsProvider =
     StateNotifierProvider<RecentChatsNotifier, List<Map<String, dynamic>>>((
       ref,
     ) {
+      // Watch for auth changes to force rebuild on logout/login
+      ref.watch(authStateProvider);
       return RecentChatsNotifier(ref: ref);
     });
 
@@ -31,13 +33,23 @@ class RecentChatsNotifier extends StateNotifier<List<Map<String, dynamic>>> {
   Future<void> _init() async {
     try {
       _hiveService = ref.read(hiveServiceProvider);
-      _currentUserId = ref.read(authServiceProvider).currentUser!.uid;
 
-      // 1. Load from Hive IMMEDIATELY
+      final authService = ref.read(authServiceProvider);
+      if (authService.currentUser == null) {
+        state = [];
+        return;
+      }
+
+      _currentUserId = authService.currentUser!.uid;
+
+      // 1. Initialize user-specific box
+      await _hiveService.initRecentsForUser(_currentUserId);
+
+      // 2. Load from Hive
       state = _hiveService.getRecentChats();
       debugPrint('📱 Loaded ${state.length} recent chats from Hive (instant)');
 
-      // 2. Start Firestore sync in background
+      // 3. Start Firestore sync in background
       _startFirestoreSync();
     } catch (e) {
       debugPrint('❌ Error initializing recent chats: $e');

@@ -4,8 +4,8 @@ import 'package:uuid/uuid.dart';
 
 part 'message_hive.g.dart';
 
-
 class MessageStatus {
+  static const String pending = 'pending';
   static const String sent = 'sent';
   static const String delivered = 'delivered';
   static const String read = 'read';
@@ -117,7 +117,8 @@ class Message extends HiveObject {
       'senderName': senderName,
       'message': message,
       'timestamp': Timestamp.fromDate(timestamp),
-      'type': type,'localId':localId,
+      'type': type,
+      'localId': localId,
       if (caption != null) 'caption': caption,
       'status': status,
       if (replyToId != null) 'replyToId': replyToId,
@@ -172,7 +173,7 @@ class Message extends HiveObject {
       senderName: data['senderName'] ?? '',
       receiverID: data['receiverID'] ?? '',
       message: data['message'] ?? '',
-      timestamp: DateTime.now(), 
+      timestamp: DateTime.now(),
       type: data['type'] ?? 'text',
       status: data['status'] ?? 'delivered',
       localId: data['localId'] ?? data['messageId'] ?? const Uuid().v4(),

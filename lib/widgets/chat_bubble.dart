@@ -1,11 +1,13 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:social/providers/chat_provider.dart';
+
 import 'package:social/utils/date_utils.dart';
-import 'package:social/widgets/my_alert_dialog.dart';
+
 import 'package:social/widgets/voice_message_bubble.dart';
 
 class ChatBubble extends ConsumerStatefulWidget {
@@ -23,6 +25,11 @@ class ChatBubble extends ConsumerStatefulWidget {
     this.onReply,
     this.onReplyTap,
     this.isHighlighted = false,
+    this.isSelected = false,
+    this.onTap,
+    required this.onLongPress,
+    this.isFirstInSequence = true,
+    this.isLastInSequence = true,
   });
 
   final Alignment alignment;
@@ -37,6 +44,13 @@ class ChatBubble extends ConsumerStatefulWidget {
   final void Function()? onReply;
   final void Function(String replyToId)? onReplyTap;
   final bool isHighlighted;
+  final bool isSelected;
+  final VoidCallback? onTap; // For selection toggle
+  final VoidCallback? onLongPress; // For entering selection mode
+
+  // Grouping flags
+  final bool isFirstInSequence;
+  final bool isLastInSequence;
 
   @override
   ConsumerState<ChatBubble> createState() => _ChatBubbleState();
@@ -101,180 +115,6 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
     });
   }
 
-  // show options
-  void showOptions(
-    BuildContext context,
-    WidgetRef ref,
-    String messageId,
-    String userId,
-    String otherUserId,
-  ) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            // star message
-            ListTile(
-              leading: Icon(
-                widget.isStarred ? Icons.star : Icons.star_border,
-                color: widget.isStarred ? Colors.orange : null,
-              ),
-              title: Text(widget.isStarred ? 'Unstar' : 'Star'),
-              onTap: () {
-                context.pop();
-                ref
-                    .read(chatServiceProvider)
-                    .toggleStarMessage(
-                      widget.data,
-                      messageId,
-                      widget.receiverId,
-                    );
-              },
-            ),
-            // edit message (only for text messages from sender)
-            if (widget.isSender && widget.data['type'] == 'text')
-              ListTile(
-                leading: Icon(Icons.edit),
-                title: Text('Edit'),
-                onTap: () {
-                  context.pop();
-                  _showEditDialog(context, ref, messageId, otherUserId);
-                },
-              ),
-            // report message
-            if (!widget.isSender)
-              ListTile(
-                leading: Icon(Icons.flag),
-                title: Text('Report'),
-                onTap: () {
-                  context.pop();
-                  report(context, ref, messageId, userId);
-                },
-              ),
-            // delete message
-            ListTile(
-              leading: Icon(Icons.delete_rounded),
-              title: Text('Delete'),
-              onTap: () {
-                context.pop();
-                deleteMessage(context, ref, messageId, otherUserId);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Edit message dialog
-  void _showEditDialog(
-    BuildContext context,
-    WidgetRef ref,
-    String messageId,
-    String otherUserId,
-  ) {
-    final TextEditingController editController = TextEditingController(
-      text: widget.data['message'],
-    );
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Message'),
-        content: TextField(
-          controller: editController,
-          autofocus: true,
-          maxLines: null,
-          decoration: const InputDecoration(
-            hintText: 'Edit your message...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => context.pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final newMessage = editController.text.trim();
-              if (newMessage.isNotEmpty &&
-                  newMessage != widget.data['message']) {
-                ref
-                    .read(chatServiceProvider)
-                    .editMessage(otherUserId, messageId, newMessage);
-              }
-              context.pop();
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // report user
-  void report(
-    BuildContext context,
-    WidgetRef ref,
-    String messageId,
-    String userId,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => MyAlertDialog(
-        content: 'Are you sure you want to report this message?',
-        title: 'Report',
-        text: 'report',
-        onpressed: () {
-          ref.read(chatServiceProvider).reportUser(messageId, userId);
-
-          context.pop();
-          context.pop();
-
-          // show snackbar
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Report sent'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // delete message
-  void deleteMessage(
-    BuildContext context,
-    WidgetRef ref,
-    String messageId,
-    String otherUserId,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => MyAlertDialog(
-        content: 'Are you sure you want to delete this message?',
-        title: 'Delete Message',
-        text: 'delete',
-        onpressed: () {
-          ref.read(chatServiceProvider).deleteMessage(otherUserId, messageId);
-
-          context.pop();
-
-          // show snackbar
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Message deleted'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     bool isImage = widget.data['type'] == 'image';
@@ -293,6 +133,39 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                 ? (-_dragOffset / _swipeThreshold)
                 : (_dragOffset / _swipeThreshold))
             .clamp(0.0, 1.0);
+
+    // Dynamic Border Radius for grouping effect
+    final double largeRadius = 18.0;
+    final double smallRadius = 4.0;
+
+    BorderRadius bubbleRadius;
+    if (widget.isSender) {
+      bubbleRadius = BorderRadius.only(
+        topLeft: Radius.circular(largeRadius),
+        bottomLeft: Radius.circular(largeRadius),
+        topRight: Radius.circular(
+          widget.isFirstInSequence ? largeRadius : smallRadius,
+        ),
+        bottomRight: Radius.circular(
+          widget.isLastInSequence ? largeRadius : smallRadius,
+        ),
+      );
+    } else {
+      bubbleRadius = BorderRadius.only(
+        topRight: Radius.circular(largeRadius),
+        bottomRight: Radius.circular(largeRadius),
+        topLeft: Radius.circular(
+          widget.isFirstInSequence ? largeRadius : smallRadius,
+        ),
+        bottomLeft: Radius.circular(
+          widget.isLastInSequence ? largeRadius : smallRadius,
+        ),
+      );
+    }
+
+    // Dynamic vertical padding
+    final double topPad = widget.isFirstInSequence ? 4.0 : 1.0;
+    final double bottomPad = widget.isLastInSequence ? 4.0 : 1.0;
 
     return AnimatedBuilder(
       animation: _animation,
@@ -335,30 +208,28 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
             GestureDetector(
               onHorizontalDragUpdate: _onHorizontalDragUpdate,
               onHorizontalDragEnd: _onHorizontalDragEnd,
-              onLongPress: () {
-                showOptions(
-                  context,
-                  ref,
-                  widget.messageId,
-                  widget.userId,
-                  widget.receiverId,
-                );
-              },
+              onLongPress: widget.onLongPress,
+              onTap: widget.onTap,
               child: Transform.translate(
                 offset: Offset(offset, 0),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   alignment: widget.alignment,
                   decoration: BoxDecoration(
-                    color: widget.isHighlighted
+                    color: (widget.isHighlighted || widget.isSelected)
                         ? Theme.of(
                             context,
                           ).colorScheme.primary.withValues(alpha: 0.2)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: bubbleRadius,
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(8.0),
+                    padding: EdgeInsets.only(
+                      left: 8,
+                      right: 8,
+                      top: topPad,
+                      bottom: bottomPad,
+                    ),
                     child: Column(
                       crossAxisAlignment: widget.isSender
                           ? CrossAxisAlignment.end
@@ -386,7 +257,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                                 end: Alignment.topRight,
                               ),
                               color: widget.bubbleColor,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: bubbleRadius,
                             ),
                             child: IntrinsicWidth(
                               child: Column(
@@ -399,11 +270,16 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                                   isVoice
                                       ? VoiceMessageBubble(
                                           audioUrl: widget.data['message'],
+                                          localFilePath:
+                                              widget.data['localFilePath'],
                                           duration:
                                               widget.data['voiceDuration'] ?? 0,
                                           isSender: widget.isSender,
                                           bubbleColor: widget.bubbleColor,
                                           textTime: textTime,
+                                          status:
+                                              widget.data['status'] ?? 'read',
+                                          syncStatus: widget.data['syncStatus'],
                                         )
                                       : isMedia
                                       ? _buildMediaContent(
@@ -456,7 +332,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
         margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.2),
+          color: Colors.black.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(8),
           border: Border(
             left: BorderSide(
@@ -521,6 +397,9 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
     required String? caption,
     required String textTime,
   }) {
+    final message = widget.data['message'] as String;
+    final isGif = message.toLowerCase().contains('.gif');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -533,22 +412,23 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
               onTap: isVideo
                   ? () => context.push(
                       '/videoPlayer',
-                      extra: {
-                        'videoUrl': widget.data['message'],
-                        'caption': caption,
-                      },
+                      extra: {'videoUrl': message, 'caption': caption},
                     )
                   : () => context.push(
                       '/viewImage',
                       extra: {
-                        'photoUrl': widget.data['message'],
+                        'photoUrl': message,
                         'caption': caption,
+                        'senderName': widget.isSender
+                            ? 'You'
+                            : widget.senderName,
+                        'timestamp': widget.data['timestamp'],
                       },
                     ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Hero(
-                  tag: widget.data['message'],
+                  tag: message,
                   child: isVideo && widget.data['thumbnailUrl'] != null
                       ? CachedNetworkImage(
                           imageUrl: widget.data['thumbnailUrl'],
@@ -572,8 +452,52 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                         )
                       : isVideo
                       ? _buildVideoPlaceholder()
+                      : (widget.data['localFilePath'] != null &&
+                            widget.data['localFilePath'].isNotEmpty)
+                      ? (kIsWeb
+                            ? Image.network(
+                                widget.data['localFilePath'],
+                                height: 300,
+                                width: 250,
+                                fit: BoxFit.cover,
+                              )
+                            : Image.file(
+                                File(widget.data['localFilePath']),
+                                height: 300,
+                                width: 250,
+                                fit: BoxFit.cover,
+                              ))
+                      : isGif
+                      ? Image.network(
+                          message,
+                          height: 200,
+                          width: 220,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                                color: Colors.grey[300],
+                                height: 200,
+                                width: 220,
+                                child: const Icon(
+                                  Icons.broken_image,
+                                  color: Colors.red,
+                                ),
+                              ),
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Skeleton.replace(
+                              height: 200,
+                              width: 220,
+                              child: Container(
+                                height: 200,
+                                width: 220,
+                                color: Colors.black12,
+                              ),
+                            );
+                          },
+                        )
                       : CachedNetworkImage(
-                          imageUrl: widget.data['message'],
+                          imageUrl: message,
                           height: 300,
                           width: 250,
                           fit: BoxFit.cover,
@@ -748,56 +672,60 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
   Widget _buildTextContent(BuildContext context, String textTime) {
     final bool isEdited = widget.data['isEdited'] == true;
 
-    return Stack(
-      children: [
-        Text.rich(
-          TextSpan(
-            text: widget.data['message'],
-            style: TextStyle(
-              fontSize: 14,
-              color: widget.isSender ? Colors.white : Colors.black,
+    return SelectionArea(
+      child: Stack(
+        children: [
+          Text.rich(
+            TextSpan(
+              text: widget.data['message'],
+              style: TextStyle(
+                fontSize: 14,
+                color: widget.isSender ? Colors.white : Colors.black,
+              ),
+              children: [
+                WidgetSpan(child: SizedBox(width: isEdited ? 95 : 75)),
+              ],
             ),
-            children: [WidgetSpan(child: SizedBox(width: isEdited ? 95 : 75))],
           ),
-        ),
-        Positioned(
-          bottom: 0,
-          right: 0,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.isStarred)
-                Padding(
-                  padding: const EdgeInsets.only(right: 3),
-                  child: Icon(Icons.star, size: 12, color: Colors.orange),
-                ),
-              if (isEdited)
-                Padding(
-                  padding: const EdgeInsets.only(right: 3),
-                  child: Text(
-                    'edited',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontStyle: FontStyle.italic,
-                      color: Colors.white60,
+          Positioned(
+            bottom: 0,
+            right: 0,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.isStarred)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 3),
+                    child: Icon(Icons.star, size: 12, color: Colors.orange),
+                  ),
+                if (isEdited)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 3),
+                    child: Text(
+                      'edited',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.white60,
+                      ),
                     ),
                   ),
+                Text(
+                  textTime,
+                  style: TextStyle(fontSize: 10, color: Colors.white60),
                 ),
-              Text(
-                textTime,
-                style: TextStyle(fontSize: 10, color: Colors.white60),
-              ),
-              if (widget.isSender) ...[
-                SizedBox(width: 3),
-                StatusIcon(
-                  status: widget.data['status'] ?? 'read',
-                  syncStatus: widget.data['syncStatus'],
-                ),
+                if (widget.isSender) ...[
+                  SizedBox(width: 3),
+                  StatusIcon(
+                    status: widget.data['status'] ?? 'read',
+                    syncStatus: widget.data['syncStatus'],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -813,19 +741,16 @@ class StatusIcon extends StatelessWidget {
     Color? color;
 
     if (syncStatus != null) {
-      if (syncStatus!.contains('pending') || syncStatus!.contains('syncing')) {
-        return Icon(
-          Icons.access_time,
-          size: 14,
-          color: Theme.of(context).colorScheme.inversePrimary,
-        );
-      }
       if (syncStatus!.contains('failed')) {
         return const Icon(Icons.error_outline, size: 16, color: Colors.red);
       }
     }
 
     switch (status) {
+      case 'pending':
+        icon = Icons.access_time_rounded;
+        color = Theme.of(context).colorScheme.inversePrimary;
+        break;
       case 'sent':
         icon = Icons.check_rounded;
         color = Theme.of(context).colorScheme.inversePrimary;

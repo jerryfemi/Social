@@ -26,6 +26,7 @@ void main() async {
   Hive.registerAdapter(MessageSyncStatusAdapter());
 
   await HiveService().init();
+  await Hive.openBox('settings');
 
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,

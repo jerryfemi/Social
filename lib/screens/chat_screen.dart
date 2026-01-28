@@ -1,25 +1,23 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mime/mime.dart';
-import 'package:skeletonizer/skeletonizer.dart';
+import 'package:social/models/message_hive.dart' as hive_model;
 import 'package:social/providers/chat_message_provider.dart';
+import 'package:social/providers/chat_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/notification_service.dart';
-import 'package:social/providers/chat_provider.dart';
-import 'package:social/utils/date_utils.dart';
-import 'package:social/widgets/chat_bubble.dart';
-import 'package:social/widgets/voice_recorder_button.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 
-import '../models/message_hive.dart' as hive_model;
+import 'package:social/widgets/chat_app_bar.dart';
+import 'package:social/widgets/chat_input_bar.dart';
+import 'package:social/widgets/message_list_view.dart';
+import 'package:social/widgets/my_alert_dialog.dart';
+import 'package:social/widgets/pinned_message.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String receiverName;
@@ -37,35 +35,52 @@ class ChatScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
-  final _messageController = TextEditingController();
   final authService = AuthService();
   final _notificationService = NotificationService();
-  final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
-  bool _showAttachments = false;
+
+  // Note: This focus node is currently detached from the input bar's text field.
+  // It needs to be connected to ChatInputBar if we want to programmatically focus (e.g. on reply).
+  final FocusNode _focusNode = FocusNode();
+
   final ImagePicker imagePicker = ImagePicker();
-  Uint8List? _selectedImageBytes;
-  String? _selectedImageName;
-  String? _selectedMediaType;
-  String? _selectedVideoPath;
 
   // Reply state
   Map<String, dynamic>? _replyingTo;
-  String? _replyingToId;
-  String? _replyingToSender;
-
-  // Voice recording state
-  bool _isRecording = false;
-  final GlobalKey<VoiceRecorderButtonState> _voiceRecorderKey = GlobalKey();
-
-  // Track if text field has content
-  bool _hasText = false;
 
   // Highlight state for scroll-to-message
   String? _highlightedMessageId;
-  final Map<String, GlobalKey> _messageKeys = {};
 
- 
+  // SELECTION MODE STATE
+  final Set<String> _selectedMessageIds = {};
+  bool _isSelectionMode = false;
+
+  void _enterSelectionMode(String messageId) {
+    setState(() {
+      _isSelectionMode = true;
+      _selectedMessageIds.add(messageId);
+    });
+  }
+
+  void _toggleSelection(String messageId) {
+    setState(() {
+      if (_selectedMessageIds.contains(messageId)) {
+        _selectedMessageIds.remove(messageId);
+        if (_selectedMessageIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedMessageIds.add(messageId);
+      }
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _isSelectionMode = false;
+      _selectedMessageIds.clear();
+    });
+  }
 
   // Typing indicator
   Timer? _typingTimer;
@@ -80,49 +95,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
-
     // Tell notification service we're in this chat (suppress notifications from this user)
     _notificationService.setCurrentChat(widget.receiverId);
-
-    // scroll down if focusNode has focus
-    _focusNode.addListener(() {
-      if (_focusNode.hasFocus) {
-        setState(() {
-          _showAttachments = false;
-        });
-        Future.delayed(Duration(milliseconds: 300), () => _scrollDown());
-      }
-      // Trigger rebuild when focus changes
-      setState(() {});
-    });
-
-    // Listen for text changes and update typing status
-    _messageController.addListener(_onTextChanged);
-  }
-
-  void _onTextChanged() {
-    final hasText = _messageController.text.trim().isNotEmpty;
-    if (hasText != _hasText) {
-      setState(() {
-        _hasText = hasText;
-      });
-    }
-
-    // Update typing status
-    if (_messageController.text.isNotEmpty) {
-      _setTyping(true);
-    }
   }
 
   void _setTyping(bool typing) {
     if (typing) {
-      // Set typing to true
       if (!_isTyping) {
         _isTyping = true;
         ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, true);
       }
-
-      // Reset the timer
       _typingTimer?.cancel();
       _typingTimer = Timer(const Duration(seconds: 3), () {
         _isTyping = false;
@@ -135,39 +117,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  // dispose
   @override
   void dispose() {
-    // Clear typing status
     _typingTimer?.cancel();
     if (_isTyping) {
       ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
     }
-    // Clear current chat so notifications show again
     _notificationService.clearCurrentChat();
     _focusNode.dispose();
     _scrollController.dispose();
-    _messageController.removeListener(_onTextChanged);
-    _messageController.dispose();
     super.dispose();
   }
 
-  void _toggleAttachments() {
-    setState(() {
-      _showAttachments = !_showAttachments;
-      if (_showAttachments) {
-        // close keyboard
-        _focusNode.unfocus();
-      }
-    });
-
-    // Scroll to bottom after menu opens
-    if (_showAttachments) {
-      Future.delayed(const Duration(milliseconds: 300), () => _scrollDown());
-    }
-  }
-
-  // scroll down
   void _scrollDown({bool immediate = false}) {
     if (_scrollController.hasClients) {
       if (immediate) {
@@ -182,134 +143,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  // Scroll to a specific message and highlight it
+  // Highlight a message. The MessageListView monitors this ID and scrolls to it.
   void _scrollToMessage(String messageId) {
-    final key = _messageKeys[messageId];
-    if (key?.currentContext != null) {
-      // Scroll to the message
-      Scrollable.ensureVisible(
-        key!.currentContext!,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-        alignment: 0.5, // Center the message
-      );
+    setState(() {
+      _highlightedMessageId = messageId;
+    });
 
-      // Highlight the message briefly
-      setState(() {
-        _highlightedMessageId = messageId;
-      });
-
-      // Remove highlight after animation
-      Future.delayed(const Duration(milliseconds: 1000), () {
-        if (mounted) {
-          setState(() {
-            _highlightedMessageId = null;
-          });
-        }
-      });
-    }
-  }
-
-  // send message
-  void sendMessage() async {
-    final text = _messageController.text.trim();
-
-    if (text.isEmpty && _selectedImageBytes == null) return;
-
-    final imageBytes = _selectedImageBytes;
-    final videoPath = _selectedVideoPath;
-    final mediaName = _selectedImageName;
-    final isVideo = _selectedMediaType == 'video';
-
-    // Capture reply data before clearing
-    final replyToId = _replyingToId;
-    final replyToMessage = _replyingTo?['message'] as String?;
-    final replyToSender = _replyingToSender;
-    final replyToType = _replyingTo?['type'] as String? ?? 'text';
-
-    // get chat room Id
-    final currentUserId = authService.currentUser!.uid;
-    final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
-    final notifier = ref.read(chatMessagesProvider(chatRoomId).notifier);
-
-    try {
-      if (imageBytes != null) {
-        // SEND MEDIA
-        await notifier.sendMediaMessage(
-        receiverId: widget.receiverId,
-        receiverName: widget.receiverName,
-        fileName: mediaName ?? (isVideo ? 'video.mp4' : 'image.jpg'),
-        imageBytes: isVideo ? null : imageBytes,
-        videoPath: isVideo ? videoPath : null,
-        caption: text.isNotEmpty ? text : null,
-        replyToId: replyToId,
-        replyToMessage: replyToMessage,
-        replyToSender: replyToSender,
-        replyToType: replyToType,
-      );
-
-        _clearImage();
-      } else {
-        // send message
-        await notifier.sendTextMessage(
-        receiverId: widget.receiverId,
-        receiverName: widget.receiverName,
-        text: text,
-        replyToId: replyToId,
-        replyToMessage: replyToMessage,
-        replyToSender: replyToSender,
-        replyToType: replyToType,
-      );
-
+    // Remove highlight after animation
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
       }
-
-      // clear textfield and reply
-      _messageController.clear();
-      _clearReply();
-      _setTyping(false); // Clear typing status when message sent
-
-      // scroll down after sending mesage
-      _scrollDown();
-    } catch (e) {
-      _showSnackBar('Error: $e');
-    }
-  }
-
-  // Send voice message
-  void _sendVoiceMessage(String voicePath, int duration) async {
-    // Capture reply data before clearing
-    final replyToId = _replyingToId;
-    final replyToMessage = _replyingTo?['message'] as String?;
-    final replyToSender = _replyingToSender;
-    final replyToType = _replyingTo?['type'] as String? ?? 'text';
-
-    // get chat room id
-    final currentUserId = authService.currentUser!.uid;
-  final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
-  final notifier = ref.read(chatMessagesProvider(chatRoomId).notifier);
-
-
-    try {
-         await notifier.sendVoiceMessage(
-      receiverId: widget.receiverId,
-      receiverName: widget.receiverName,
-      localPath: voicePath,
-      duration: duration,
-      replyToId: replyToId,
-      replyToMessage: replyToMessage,
-      replyToSender: replyToSender,
-      replyToType: replyToType,
-    );
-
-
-      // Clear reply
-      _clearReply();
-
-      // Scroll down after sending
-      _scrollDown();
-    } catch (e) {
-      _showSnackBar('Error sending voice message: $e');
-    }
+    });
   }
 
   // Set reply to message
@@ -320,18 +167,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   ) {
     setState(() {
       _replyingTo = data;
-      _replyingToId = messageId;
-      _replyingToSender = senderName;
     });
-    _focusNode.requestFocus();
+    // Request focus logic is currently disconnected until FocusNode is shared with ChatInputBar
+    // _focusNode.requestFocus();
   }
 
   // Clear reply
   void _clearReply() {
     setState(() {
       _replyingTo = null;
-      _replyingToId = null;
-      _replyingToSender = null;
     });
   }
 
@@ -345,111 +189,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  // pick and send image
-  Future<void> _pickImage() async {
-    try {
-      final XFile? pickedFile = await imagePicker.pickMedia(
-        imageQuality: 70,
-        requestFullMetadata: false,
-      );
-
-      if (pickedFile == null) {
-        print('No file selected');
-        return;
-      }
-
-      // On web, use mimeType property; on mobile, use lookupMimeType
-      String? mime = pickedFile.mimeType;
-      if (mime == null || mime.isEmpty) {
-        mime = lookupMimeType(pickedFile.path);
-      }
-
-      print('Picked file: ${pickedFile.name}, mime: $mime');
-
-      final isImage = mime?.startsWith('image') == true;
-      final isVideo = mime?.startsWith('video') == true;
-
-      if (isImage) {
-        print('Image picked');
-
-        // On mobile, use image cropper
-        await cropImage(pickedFile);
-
-        print('IMAGE READY 🟢');
-      } else if (isVideo) {
-        print('Video picked');
-
-        // On mobile, use video trimmer
-        if (!mounted) return;
-        final String? trimmedPath = await context.push(
-          '/editVideo',
-          extra: pickedFile.path,
-        );
-
-        if (trimmedPath != null) {
-          final Uint8List? thumbBytes = await VideoThumbnail.thumbnailData(
-            video: trimmedPath,
-            imageFormat: ImageFormat.JPEG,
-            quality: 75,
-          );
-
-          setState(() {
-            _selectedImageBytes = thumbBytes;
-            _selectedVideoPath = trimmedPath;
-            _selectedMediaType = 'video';
-            _showAttachments = false;
-          });
-        }
-      } else {
-        print('Unknown media type: $mime');
-        _showSnackBar('Unsupported file type');
-      }
-    } catch (e) {
-      print('Error picking image: $e');
-      _showSnackBar('Error: $e');
-    }
-  }
-
-  // CROP IMAGE
-  Future<void> cropImage(XFile imageFile) async {
-    try {
-      final CroppedFile? croppedFile = await ImageCropper().cropImage(
-        sourcePath: imageFile.path,
-        uiSettings: [
-          AndroidUiSettings(
-            toolbarColor: Theme.of(context).colorScheme.secondary,
-            toolbarWidgetColor: Theme.of(context).colorScheme.primary,
-            initAspectRatio: CropAspectRatioPreset.original,
-            lockAspectRatio: false,
-          ),
-          WebUiSettings(context: context),
-        ],
-      );
-
-      if (croppedFile != null) {
-        final bytes = await croppedFile.readAsBytes();
-
-        setState(() {
-          _selectedImageBytes = bytes;
-          _selectedImageName = imageFile.name;
-        });
-        _focusNode.requestFocus();
-      }
-      print('IMAGE CROP SUCCESSFUL 🟢 ');
-    } catch (e) {
-      print('FAILED TO CROP IMAGE🔴: $e');
-    }
-  }
-
-  void _clearImage() {
-    setState(() {
-      _selectedImageBytes = null;
-      _selectedImageName = null;
-      _selectedVideoPath = null;
-      _selectedMediaType = null;
-    });
-  }
-
   // SET WALLPAPER
   Future<void> _setWallpaper() async {
     try {
@@ -459,8 +198,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
       // set wallpaper
       if (pickedFile != null) {
-        setState(() => _showAttachments = false);
-
         Uint8List filebytes = await pickedFile.readAsBytes();
         String fileName = pickedFile.name;
 
@@ -474,6 +211,282 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } catch (e) {
       _showSnackBar('Failed to set wallpaper: $e');
     }
+  }
+
+  // 2. NEW: SET SOLID COLOR WALLPAPER
+  Future<void> _setWallpaperColor(Color color) async {
+    try {
+      context.pop(); // Close dialog
+
+      // We convert the Color to a Hex String (e.g., "0xFF000000")
+      String colorString = '0x${color.value.toRadixString(16).toUpperCase()}';
+      await ref
+          .read(chatServiceProvider)
+          .setChatWallpaperColor(widget.receiverId, colorString);
+    } catch (e) {
+      _showSnackBar('Failed to set color: $e');
+    }
+  }
+
+  // 3. NEW: SHOW COLOR PICKER DIALOG (Hex)
+  void _showColorPickerDialog() {
+    Color pickerColor = Colors.blue;
+    // Try to get current wallpaper color
+    final chatRoomAsync = ref.read(chatStreamProvider(widget.receiverId));
+    if (chatRoomAsync.value?.data() != null) {
+      final data = chatRoomAsync.value!.data() as Map<String, dynamic>;
+      if (data.containsKey('wallpaper')) {
+        final wallpapers = data['wallpaper'] as Map<String, dynamic>?;
+        final val = wallpapers?[authService.currentUser!.uid];
+        if (val != null && !val.startsWith('http')) {
+          try {
+            pickerColor = Color(int.parse(val));
+          } catch (_) {}
+        }
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Pick a color'),
+        content: SingleChildScrollView(
+          child: ColorPicker(
+            pickerColor: pickerColor,
+            onColorChanged: (color) {
+              pickerColor = color;
+            },
+            enableAlpha: false,
+            displayThumbColor: true,
+            hexInputBar: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Save'),
+            onPressed: () {
+              _setWallpaperColor(pickerColor);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // RESET WALLPAPER
+  Future<void> _resetWallpaper() async {
+    try {
+      await ref
+          .read(chatServiceProvider)
+          .deleteChatWallpaper(widget.receiverId);
+      _showSnackBar('Chat wallpaper reset!');
+    } catch (e) {
+      _showSnackBar('Failed to reset wallpaper: $e');
+    }
+  }
+
+  //  DELETE
+  Future<void> _deleteSelectedMessages() async {
+    final idsToDelete = List<String>.from(_selectedMessageIds);
+    if (idsToDelete.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => MyAlertDialog(
+        content: 'Delete ${idsToDelete.length} message(s)?',
+        title: 'Delete',
+        text: 'Delete',
+        onpressed: () async {
+          context.pop(); // close dialog
+          _exitSelectionMode();
+
+          // Use NOTIFIER to handle Local -> Firestore ID mapping and Hive deletion
+          final chatRoomId = _getChatRoomId(
+            authService.currentUser!.uid,
+            widget.receiverId,
+          );
+          final notifier = ref.read(chatMessagesProvider(chatRoomId).notifier);
+
+          for (final id in idsToDelete) {
+            await notifier.deleteMessage(id);
+          }
+        },
+      ),
+    );
+  }
+
+  // STAR SELECTED
+  Future<void> _starSelectedMessages(
+    List<hive_model.Message> allMessages,
+  ) async {
+    final selectedMsgs = allMessages
+        .where((m) => _selectedMessageIds.contains(m.localId))
+        .toList();
+
+    _exitSelectionMode();
+
+    final chatService = ref.read(chatServiceProvider);
+
+    for (final msg in selectedMsgs) {
+      // Use Firestore ID if available, otherwise fallback to localId (but likely needs sync)
+      final idToStar = msg.fireStoreId ?? msg.localId;
+
+      await chatService.toggleStarMessage(
+        msg.toFirestoreMap(),
+        idToStar,
+        widget.receiverId,
+      );
+    }
+  }
+
+  // PIN MESSAGE
+  Future<void> _pinSelectedMessage(hive_model.Message message) async {
+    _exitSelectionMode();
+    await ref.read(chatServiceProvider).pinMessage(widget.receiverId, message);
+  }
+
+  // EDIT MESSAGE
+  void _editSelectedMessage(hive_model.Message message) {
+    if (message.type != 'text') return;
+    _exitSelectionMode();
+
+    final TextEditingController editController = TextEditingController(
+      text: message.message,
+    );
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Message'),
+        content: TextField(
+          controller: editController,
+          autofocus: true,
+          maxLines: null,
+          decoration: const InputDecoration(
+            hintText: 'Edit message...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => context.pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newMessage = editController.text.trim();
+              if (newMessage.isNotEmpty && newMessage != message.message) {
+                final chatRoomId = _getChatRoomId(
+                  authService.currentUser!.uid,
+                  widget.receiverId,
+                );
+                ref
+                    .read(chatMessagesProvider(chatRoomId).notifier)
+                    .editMessage(message.localId, newMessage);
+              }
+              context.pop();
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // REPORT MESSAGE
+  void _reportMessage(hive_model.Message message) {
+    _exitSelectionMode();
+    showDialog(
+      context: context,
+      builder: (context) => MyAlertDialog(
+        content: 'Report this message?',
+        title: 'Report',
+        text: 'Report',
+        onpressed: () {
+          ref
+              .read(chatServiceProvider)
+              .reportUser(message.localId, message.senderID);
+          context.pop();
+          context.pop();
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Report sent')));
+        },
+      ),
+    );
+  }
+
+  List<Widget> _buildSelectionModeActions(
+    String chatRoomId,
+    String currentUserId,
+  ) {
+    // 1. Get Selected Messages from the provider
+    final messages =
+        ref.watch(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+
+    final selectedMsgs = messages
+        .where((m) => _selectedMessageIds.contains(m.localId))
+        .toList();
+
+    if (selectedMsgs.isEmpty) return [];
+
+    final count = selectedMsgs.length;
+    final first = selectedMsgs.first;
+    final isMe = first.senderID == currentUserId;
+
+    // 2. Define Action List
+    final List<Map<String, dynamic>> actions = [];
+
+    // PIN
+    final isMedia = first.type == 'image' || first.type == 'video';
+    final hasCaption = first.caption != null && first.caption!.isNotEmpty;
+    bool canPin = true;
+    if (isMedia && !hasCaption) canPin = false;
+
+    if (count == 1 && canPin) {
+      actions.add({
+        'icon': Icons.push_pin,
+        'onTap': () => _pinSelectedMessage(first),
+      });
+    }
+
+    // DELETE (Always avail in selection)
+    actions.add({
+      'icon': Icons.delete,
+      'onTap': () => _deleteSelectedMessages(),
+    });
+
+    // STAR (Always avail)
+    actions.add({
+      'icon': Icons.star_border,
+      'onTap': () => _starSelectedMessages(messages),
+    });
+
+    // EDIT
+    if (count == 1 && isMe && first.type == 'text') {
+      actions.add({
+        'icon': Icons.edit,
+        'onTap': () => _editSelectedMessage(first),
+      });
+    }
+
+    // REPORT
+    if (count == 1 && !isMe) {
+      actions.add({'icon': Icons.flag, 'onTap': () => _reportMessage(first)});
+    }
+
+    // 3. Map to Widgets
+    return actions.map((action) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: IconButton(
+          icon: Icon(
+            action['icon'] as IconData,
+            color: Theme.of(context).colorScheme.secondary,
+          ),
+          onPressed: action['onTap'] as VoidCallback,
+        ),
+      );
+    }).toList();
   }
 
   @override
@@ -495,692 +508,251 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 .messageRead(currentUserId, widget.receiverId);
           });
 
-          // Auto-scroll when new messages arrive
-          Future.delayed(const Duration(milliseconds: 100), () {
-            if (_scrollController.hasClients) {
-              _scrollDown();
-            }
-          });
+          //  Only scroll if New Messages > Old Messages
+          final oldLen = previous?.asData?.value.length ?? 0;
+          final newLen = messages.length;
+
+          // Also scroll if we are nearly at bottom
+          // or if it's the first load (oldLen == 0)
+          if (newLen > oldLen || oldLen == 0) {
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (_scrollController.hasClients) {
+                _scrollDown();
+              }
+            });
+          }
         });
       },
     );
     // ============================================================
 
     final chatRoomAsync = ref.watch(chatStreamProvider(widget.receiverId));
-    final dateUtil = DateUtil();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: InkWell(
-          onTap: () => context.push(
-            '/chat_profile/${widget.receiverId}',
-            extra: widget.photoUrl,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipOval(
-                child: widget.photoUrl != null && widget.photoUrl!.isNotEmpty
-                    ? CachedNetworkImage(
-                        imageUrl: widget.photoUrl!,
-                        height: 44,
-                        width: 44,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) =>
-                            const CircularProgressIndicator(),
-                        errorWidget: (context, url, error) => Icon(
-                          Icons.person,
-                          size: 20,
-                          color: Theme.of(context).colorScheme.tertiary,
-                        ),
-                      )
-                    : CircleAvatar(
-                        backgroundColor: Theme.of(context).colorScheme.surface,
-                        radius: 22,
-                        child: Icon(
-                          Icons.person,
-                          size: 20,
-                          color: Theme.of(context).colorScheme.tertiary,
-                        ),
-                      ),
-              ),
-              SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.receiverName,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                  ),
-                  // Typing indicator or Online status
-                  Consumer(
-                    builder: (context, ref, child) {
-                      final typingAsync = ref.watch(
-                        typingStatusProvider(widget.receiverId),
-                      );
-                      final onlineAsync = ref.watch(
-                        onlineStatusProvider(widget.receiverId),
-                      );
-                      final isTyping = typingAsync.value ?? false;
-                      final onlineData = onlineAsync.value;
-                      final isOnline = onlineData?['isOnline'] ?? false;
+    //  background color for AppBar
+    Color? appBarColor;
+    if (chatRoomAsync.hasValue) {
+      final chatData = chatRoomAsync.value?.data() as Map<String, dynamic>?;
+      if (chatData != null && chatData.containsKey('wallpaper')) {
+        final wallpapers = chatData['wallpaper'] as Map<String, dynamic>?;
+        final wallpaperUrl = wallpapers?[authService.currentUser!.uid];
 
-                      // Priority: typing > online > last seen
-                      if (isTyping) {
-                        return Text(
-                          'typing...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.primary,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        );
-                      }
-
-                      if (isOnline) {
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: Colors.green,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              'Active now',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-
-                      // Show last seen if not online
-                      final lastSeen = onlineData?['lastSeen'];
-                      if (lastSeen != null) {
-                        return Text(
-                          dateUtil.formatLastSeen(lastSeen),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                        );
-                      }
-
-                      return const SizedBox.shrink();
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-      body: chatRoomAsync.when(
-        error: (error, stackTrace) =>
-            Center(child: Text('Error fetching chats $error')),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        data: (snapShot) {
-          final chatData = snapShot.data() as Map<String, dynamic>?;
-          String? wallpaperUrl;
-
-          print('CHAT DATA : $chatData');
-          //  CHECK IF DATA AND WALLPAPERS EXIST
-          if (chatData != null && chatData.containsKey('wallpaper')) {
-            final wallpapers = chatData['wallpaper'] as Map<String, dynamic>?;
-            wallpaperUrl = wallpapers?[authService.currentUser!.uid];
-
-            print('FOUND WALLPAPER URL : $wallpaperUrl');
-          }
-          return Container(
-            decoration: BoxDecoration(
-              image: wallpaperUrl != null
-                  ? DecorationImage( 
-                      image: CachedNetworkImageProvider(wallpaperUrl),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: Column(
-              children: [
-                // display messages
-                Expanded(child: _buildMessageList()),
-                _buildMessageInput(context),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // build message list
-  Widget _buildMessageList() {
-    final currentUserId = authService.currentUser!.uid;
-    final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
-
-    final messagesAsync = ref.watch(chatMessagesProvider(chatRoomId));
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 15, right: 15, top: 5),
-      child: messagesAsync.when(
-        // Loading state (only shows on first load when Hive is empty)
-        loading: () => _buildSkeletonMessages(),
-
-        // Error state
-        error: (error, stack) => Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.error_outline, size: 48, color: Colors.red),
-              const SizedBox(height: 16),
-              Text('Error loading messages'),
-              const SizedBox(height: 8),
-              Text(error.toString(), style: TextStyle(fontSize: 12)),
-            ],
-          ),
-        ),
-
-        // Data state - messages loaded from Hive
-        data: (messages) {
-          if (messages.isEmpty) {
-            return const Center(child: Text('No Messages yet'));
-          }
-
-          // Messages are already sorted (oldest first) from HiveService
-          // Reverse for UI display (newest at bottom)
-          final reversedMessages = messages.reversed.toList();
-
-          return ListView.builder(
-            reverse: true,
-            controller: _scrollController,
-            itemCount: reversedMessages.length,
-            itemBuilder: (context, index) {
-              return _buildHiveMessageItemWithDate(
-                reversedMessages,
-                index,
-                context,
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildHiveMessageItemWithDate(
-    List<hive_model.Message> messages,
-    int index,
-    BuildContext context,
-  ) {
-    final message = messages[index];
-    final messageDate = message.timestamp;
-
-    bool showHeader = false;
-
-    // If it's the last message (oldest), show header
-    if (index == messages.length - 1) {
-      showHeader = true;
-    } else {
-      // Check if date is different from next message
-      final nextMessage = messages[index + 1];
-      final nextDate = nextMessage.timestamp;
-
-      if (!DateUtil.isSameDay(messageDate, nextDate)) {
-        showHeader = true;
+        if (wallpaperUrl != null && !wallpaperUrl.startsWith('http')) {
+          try {
+            Color rawColor = Color(int.parse(wallpaperUrl));
+            // Darken it slightly (10% towards black) for visual separation
+            appBarColor = Color.lerp(rawColor, Colors.black, 0.1);
+          } catch (_) {}
+        }
       }
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (showHeader) _buildDateHeader(messageDate),
-        _buildHiveMessageItem(message, context),
-      ],
-    );
-  }
+    // TextInputField Color
+    Color? inputBackgroundColor;
+    if (appBarColor != null) {
+      // use app bar color if its not null
+      inputBackgroundColor = appBarColor;
+    } else {
+      //else use secondary color scheme
+      inputBackgroundColor = Theme.of(
+        context,
+      ).colorScheme.secondary.withValues(alpha: 0.7);
+    }
 
-  // BUILD SKELETON MESSAGES FOR LOADING STATE
-  Widget _buildSkeletonMessages() {
-    return Skeletonizer(
-      enabled: true,
-      child: ListView.builder(
-        itemCount: 10,
-        itemBuilder: (context, index) {
-          final isSender = index % 2 == 0;
-          return ChatBubble(
-            alignment: isSender ? Alignment.centerRight : Alignment.centerLeft,
-            isSender: isSender,
-            data: {
-              'message': BoneMock.paragraph,
-              'timestamp': Timestamp.now(),
-              'type': 'text',
-              'status': 'read',
-            },
-            bubbleColor: isSender ? Colors.purpleAccent : Colors.grey,
-            messageId: '',
-            userId: '',
-            senderName: '',
-            receiverId: '',
-          );
-        },
+    bool isImageUrl = false;
+    String? wallpaperUrl;
+
+    if (chatRoomAsync.value?.data() != null) {
+      final chatData = chatRoomAsync.value!.data() as Map<String, dynamic>;
+      if (chatData.containsKey('wallpaper')) {
+        final wallpapers = chatData['wallpaper'] as Map<String, dynamic>?;
+        final currentUserVal = wallpapers?[authService.currentUser!.uid];
+        if (currentUserVal is String && currentUserVal.startsWith('http')) {
+          isImageUrl = true;
+          wallpaperUrl = currentUserVal;
+        }
+      }
+    }
+
+    final backgroundColor =
+        (!isImageUrl && appBarColor != null)
+            ? appBarColor.withValues(alpha: 1.0)
+            : null;
+
+    // Calculate Navigation Bar Color & Icon Brightness
+    Color sysNavBarColor = Theme.of(context).colorScheme.surface;
+    Brightness sysNavBarIconBrightness =
+        Theme.of(context).brightness == Brightness.dark
+            ? Brightness.light
+            : Brightness.dark;
+
+    if (backgroundColor != null) {
+      sysNavBarColor = backgroundColor;
+      sysNavBarIconBrightness =
+          ThemeData.estimateBrightnessForColor(backgroundColor) ==
+                  Brightness.dark
+              ? Brightness.light
+              : Brightness.dark;
+    } else if (isImageUrl && wallpaperUrl != null) {
+      sysNavBarColor = Colors.transparent;
+      sysNavBarIconBrightness = Brightness.light;
+    }
+
+    // Build Actions
+    List<Widget> appBarActions;
+    if (_isSelectionMode) {
+      appBarActions = _buildSelectionModeActions(chatRoomId, currentUserId);
+    } else {
+      appBarActions = [
+        PopupMenuButton<String>(
+          onSelected: (value) async {
+            if (value == 'solid_color') {
+              _showColorPickerDialog();
+            } else if (value == 'reset_wallpaper') {
+              await _resetWallpaper();
+            } else if (value == 'set_wallpaper') {
+              await _setWallpaper();
+            }
+          },
+          itemBuilder:
+              (context) => const [
+                PopupMenuItem<String>(
+                  value: 'set_wallpaper',
+                  child: Row(
+                    children: [
+                      Icon(Icons.wallpaper, size: 20),
+                      SizedBox(width: 8),
+                      Text('Set wallpaper'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'solid_color',
+                  child: Row(
+                    children: [
+                      Icon(Icons.format_paint_rounded, size: 20),
+                      SizedBox(width: 8),
+                      Text('Background Color'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'reset_wallpaper',
+                  child: Text('Reset chat wallpaper'),
+                ),
+              ],
+        ),
+      ];
+    }
+
+    return Scaffold(
+      appBar: ChatAppBar(
+        receiverName: widget.receiverName,
+        receiverId: widget.receiverId,
+        photoUrl: widget.photoUrl,
+        backgroundColor: appBarColor,
+        isSelectionMode: _isSelectionMode,
+        selectedCount: _selectedMessageIds.length,
+        actions: appBarActions,
+        onProfileTap:
+            () => context.push(
+              '/chat_profile/${widget.receiverId}',
+              extra: widget.photoUrl,
+            ),
       ),
-    );
-  }
+      body: Column(
+        children: [
+          // PINNED MESSAGE
+          if (chatRoomAsync.value?.data() != null)
+            Builder(
+              builder: (context) {
+                final data =
+                    chatRoomAsync.value!.data() as Map<String, dynamic>;
+                if (data.containsKey('pinnedMessage')) {
+                  final pMsg = data['pinnedMessage'] as Map<String, dynamic>?;
+                  if (pMsg != null) {
+                    return PinnedMessageWidget(
+                      color:
+                          inputBackgroundColor ??
+                          Theme.of(
+                            context,
+                          ).colorScheme.secondary.withValues(alpha: 0.5),
+                      pinnedData: pMsg,
+                      receiverId: widget.receiverId,
+                      onTap: () {
+                        _scrollToMessage(pMsg['id']);
+                      },
+                    );
+                  }
+                }
+                return SizedBox.shrink();
+              },
+            ),
 
-  // build date header
-  Widget _buildDateHeader(DateTime date) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsetsGeometry.symmetric(
-          vertical: 6,
-          horizontal: 12,
-        ),
-        margin: EdgeInsets.symmetric(vertical: 15),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.2),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(DateUtil.getDateLabel(date)),
-      ),
-    );
-  }
-
-  // build message item list
-  Widget _buildHiveMessageItem(
-    hive_model.Message message,
-    BuildContext context,
-  ) {
-    final currentUserId = authService.currentUser!.uid;
-    final isSender = message.senderID == currentUserId;
-    final alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
-    final bubbleColor = isSender ? Colors.purpleAccent : Colors.grey;
-    final name = isSender ? 'You' : widget.receiverName;
-
-    // Get starred status (still using old provider for now)
-    final starredAsync = ref.watch(starredMessagesProvider);
-    final starredIds = starredAsync.value?.docs.map((e) => e.id).toSet() ?? {};
-    final isStarred =
-        message.fireStoreId != null && starredIds.contains(message.fireStoreId);
-
-    // Store key for scroll-to-message
-    final messageKey = message.localId;
-    _messageKeys.putIfAbsent(messageKey, () => GlobalKey());
-
-    // Convert Hive message to Map for ChatBubble (temporary compatibility)
-    final messageData = _convertHiveMessageToMap(message);
-
-    return ChatBubble(
-      key: _messageKeys[messageKey],
-      senderName: name,
-      messageId: message.localId,
-      userId: message.senderID,
-      alignment: alignment,
-      isSender: isSender,
-      data: messageData,
-      bubbleColor: bubbleColor,
-      receiverId: widget.receiverId,
-      isStarred: isStarred,
-      isHighlighted: _highlightedMessageId == messageKey,
-      onReply: () => _setReplyTo(messageData, messageKey, name),
-      onReplyTap: _scrollToMessage,
-    );
-  }
-
-  // ============ Helper: Convert Hive Message to Map ============
-  Map<String, dynamic> _convertHiveMessageToMap(hive_model.Message msg) {
-    return {
-      'senderID': msg.senderID,
-      'senderEmail': msg.senderEmail,
-      'senderName': msg.senderName,
-      'receiverId': msg.receiverID,
-      'message': msg.message,
-      'timestamp': Timestamp.fromDate(
-        msg.timestamp,
-      ), 
-      'type': msg.type,
-      'caption': msg.caption,
-      'status': msg.status,
-      'replyToId': msg.replyToId,
-      'replyToMessage': msg.replyToMessage,
-      'replyToSender': msg.replyToSender,
-      'replyToType': msg.replyToType,
-      'voiceDuration': msg.voiceDuration,
-      'thumbnailUrl': msg.thumbnailUrl,
-      'isEdited': msg.isEdited,
-      'editedAt': msg.editedAt != null
-          ? Timestamp.fromDate(msg.editedAt!)
-          : null,
-      'deletedFor': msg.deletedFor,
-      'localFilePath': msg.localFilePath, 
-      'syncStatus': msg.syncStatus.toString(), 
-    };
-  }
-
-  // build message input
-  Widget _buildMessageInput(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.only(bottom: 20, left: 15, right: 15),
-          child: _buildNormalInput(context),
-        ),
-
-        // 2. THE ATTACHMENT DRAWER (hidden when recording)
-        if (!_isRecording)
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOut,
-            height: _showAttachments ? 120 : 0,
-            width: double.infinity,
-            clipBehavior: Clip.hardEdge,
-            decoration: BoxDecoration(),
-            child: SingleChildScrollView(
-              physics: const NeverScrollableScrollPhysics(),
+          Expanded(
+            child: AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                systemNavigationBarColor: sysNavBarColor,
+                systemNavigationBarIconBrightness: sysNavBarIconBrightness,
+              ),
               child: Container(
-                height: 120,
-                padding: const EdgeInsets.only(top: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                decoration: BoxDecoration(
+                  color:
+                      backgroundColor ?? Theme.of(context).colorScheme.surface,
+                  image:
+                      (isImageUrl && wallpaperUrl != null)
+                          ? DecorationImage(
+                            image: CachedNetworkImageProvider(wallpaperUrl),
+                            fit: BoxFit.cover,
+                          )
+                          : null,
+                ),
+                child: Stack(
                   children: [
-                    // gallery buttpn
-                    GestureDetector(
-                      onTap: () => _pickImage(),
-                      child: _buildAttachmentOption(Icons.image, "Gallery"),
-                    ),
-
-                    // camera button
-                    GestureDetector(
-                      onTap: () => _pickImage(),
-                      child: _buildAttachmentOption(Icons.camera_alt, "Camera"),
-                    ),
-
-                    // wallpaper button
-                    GestureDetector(
-                      onTap: () => _setWallpaper(),
-                      child: _buildAttachmentOption(
-                        Icons.wallpaper_rounded,
-                        "Wallpaper",
+                    // display messages (at bottom of stack)
+                    Positioned.fill(
+                      child: MessageListView(
+                        chatRoomId: chatRoomId,
+                        receiverId: widget.receiverId,
+                        receiverName: widget.receiverName,
+                        scrollController: _scrollController,
+                        isSelectionMode: _isSelectionMode,
+                        selectedMessageIds: _selectedMessageIds,
+                        onEnterSelectionMode: _enterSelectionMode,
+                        onToggleSelection: _toggleSelection,
+                        onReply: _setReplyTo,
+                        highlightedMessageId: _highlightedMessageId,
                       ),
                     ),
-                    _buildAttachmentOption(Icons.person_pin_rounded, "Contact"),
+
+                    // Input (at top of stack, aligned to bottom)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildMessageInput(context, inputBackgroundColor),
+                    ),
                   ],
                 ),
               ),
             ),
           ),
-      ],
-    );
-  }
-
-  // REPLY PREVIEW WIDGET (inside TextField)
-  Widget _buildReplyPreview() {
-    final type = _replyingTo!['type'];
-    final isMedia = type == 'image' || type == 'video';
-    final isVoice = type == 'voice';
-
-    String messageText;
-    if (isVoice) {
-      messageText = '🎤 Voice message';
-    } else if (isMedia) {
-      messageText = _replyingTo!['caption'] ?? '📷 Photo';
-    } else {
-      messageText = _replyingTo!['message'];
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(left: 8, right: 8, top: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        border: Border(
-          left: BorderSide(
-            color: Theme.of(context).colorScheme.primary,
-            width: 2,
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _replyingToSender ?? '',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.primary,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  messageText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.7),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Close button
-          GestureDetector(
-            onTap: _clearReply,
-            child: Icon(
-              Icons.close,
-              size: 18,
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurface.withValues(alpha: 0.5),
-            ),
-          ),
         ],
       ),
     );
   }
 
-  // Normal input (text field + plus button)
-  Widget _buildNormalInput(BuildContext context) {
-    // When recording, show only the VoiceRecorderButton (expanded)
-    if (_isRecording) {
-      return VoiceRecorderButton(
-        key: _voiceRecorderKey,
-        onRecordingComplete: (path, duration) {
-          setState(() => _isRecording = false);
-          _sendVoiceMessage(path, duration);
-        },
-        onRecordingStart: () {},
-        onRecordingCancel: () => setState(() => _isRecording = false),
-      );
-    }
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        _selectedImageBytes != null
-            // selected image preview
-            ? _buildImageThumbnail()
-            :
-              // PLUS BUTTON
-              InkWell(
-                borderRadius: BorderRadius.circular(25),
-                onTap: _toggleAttachments,
-                child: Container(
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.secondary,
-                    shape: BoxShape.circle,
-                  ),
-                  child: AnimatedRotation(
-                    turns: _showAttachments ? 0.125 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Icon(
-                      Icons.add,
-                      size: 26,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-
-        const SizedBox(width: 10),
-        Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color:
-                  Theme.of(context).inputDecorationTheme.fillColor ??
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.secondary,
-                width: 2,
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Reply preview
-                if (_replyingTo != null) _buildReplyPreview(),
-                // Text field
-                TextField(
-                  focusNode: _focusNode,
-                  controller: _messageController,
-                  autocorrect: true,
-                  textCapitalization: TextCapitalization.sentences,
-                  keyboardType: TextInputType.multiline,
-                  maxLines: 5,
-                  minLines: 1,
-                  textInputAction: TextInputAction.newline,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.transparent,
-                    hintText: _selectedImageBytes != null
-                        ? 'Add a caption...'
-                        : null,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    border: InputBorder.none,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Voice recorder or send button
-        const SizedBox(width: 8),
-        if (_hasText || _selectedImageBytes != null)
-          _sendButton(context, sendMessage)
-        else
-          VoiceRecorderButton(
-            key: _voiceRecorderKey,
-            onRecordingComplete: _sendVoiceMessage,
-            onRecordingStart: () => setState(() => _isRecording = true),
-            onRecordingCancel: () => setState(() => _isRecording = false),
-          ),
-      ],
+  // build message input
+  Widget _buildMessageInput(BuildContext context, Color? inputBackgroundColor) {
+    return ChatInputBar(
+      receiverId: widget.receiverId,
+      receiverName: widget.receiverName,
+      replyingTo: _replyingTo,
+      onCancelReply: _clearReply,
+      onMessageSent: () {
+        _setTyping(false);
+        _scrollDown();
+        _clearReply();
+      },
     );
   }
-
-  //  THUMBNAIL WIDGET
-  Widget _buildImageThumbnail() {
-    return Padding(
-      padding: const EdgeInsets.only(left: 10, right: 8),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          GestureDetector(
-            onTap: () => _pickImage(),
-            child: Container(
-              height: 40,
-              width: 40,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white, width: 2),
-                image: DecorationImage(
-                  image: MemoryImage(_selectedImageBytes!),
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ),
-          ),
-
-          // cancel button
-          Positioned(
-            top: -8,
-            right: -8,
-            child: GestureDetector(
-              onTap: _clearImage,
-              child: CircleAvatar(
-                radius: 10,
-                backgroundColor: Colors.black54,
-                child: const Icon(Icons.close, size: 12, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Helper for the icons
-  Widget _buildAttachmentOption(IconData icon, String label) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.secondary,
-            borderRadius: BorderRadius.circular(25),
-          ),
-          child: Icon(icon, color: Colors.grey[700], size: 35),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        ),
-      ],
-    );
-  }
-}
-
-// SEND BUTTON
-Widget _sendButton(BuildContext context, void Function()? onTap) {
-  return InkWell(
-    onTap: onTap,
-    child: Container(
-      padding: EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
-        shape: BoxShape.circle,
-      ),
-      child: Icon(Icons.send, color: Colors.white, size: 24),
-    ),
-  );
 }

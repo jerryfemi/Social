@@ -23,14 +23,7 @@ class UserTile extends StatelessWidget {
       child: Container(
         margin: EdgeInsets.only(top: 3),
         padding: EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          border: BoxBorder.fromLTRB(
-            bottom: BorderSide(
-              color: Theme.of(context).colorScheme.secondary,
-              width: 3,
-            ),
-          ),
-        ),
+        decoration: BoxDecoration(),
         child: Row(
           children: [
             // profile photo
@@ -100,14 +93,8 @@ class MyTile extends StatelessWidget {
       margin: EdgeInsets.symmetric(vertical: 3),
       padding: EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondary,
+        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(12),
-        border: BoxBorder.fromLTRB(
-          bottom: BorderSide(
-            color: Theme.of(context).colorScheme.secondary,
-            width: 1.5,
-          ),
-        ),
       ),
       child: ListTile(
         leading: leading,

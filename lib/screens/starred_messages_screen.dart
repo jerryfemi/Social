@@ -92,6 +92,7 @@ class StarredMessagesScreen extends ConsumerWidget {
                         bubbleColor: bubbleColor,
                         receiverId: otherUserId,
                         isStarred: true,
+                        onLongPress: null,
                       ),
                     ],
                   ),

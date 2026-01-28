@@ -114,6 +114,19 @@ class AuthService {
 
   // sign out
   Future<void> signOut() async {
+    try {
+      // 1. Remove FCM Token to stop notifications for this user on this device
+      final user = _auth.currentUser;
+      if (user != null) {
+        // Option A: Just delete the "token" field
+        await _firestore.collection('Users').doc(user.uid).update({
+          'token': FieldValue.delete(),
+        });
+      }
+    } catch (e) {
+      // Ignore token delete errors (e.g. permission issues or offline)
+    }
+
     await HiveService().clearOnLogout();
     await _googleSignIn.signOut();
     await _auth.signOut();

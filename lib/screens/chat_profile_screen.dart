@@ -116,7 +116,12 @@ class ChatProfileScreen extends ConsumerWidget {
                 const SizedBox(height: 20),
                 Text(about, style: TextStyle(fontSize: 16)),
                 SizedBox(height: 70),
-                MyTile(title: 'Media'),
+                MyTile(
+                  title: 'Media',
+                  ontap: () {
+                    context.push('/chat_media/$receiverId');
+                  },
+                ),
                 MyTile(
                   title: 'Starred Messages',
                   ontap: () {

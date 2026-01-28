@@ -164,6 +164,8 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String? replyToMessage,
     String? replyToSender,
     String? replyToType,
+    String type = 'text',
+    String? caption,
   }) async {
     try {
       final currentUser = ref.read(authServiceProvider).currentUser!;
@@ -183,8 +185,9 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         receiverID: receiverId,
         message: text,
         timestamp: DateTime.now(),
-        type: 'text',
-        status: 'sent',
+        type: type,
+        caption: caption,
+        status: MessageStatus.pending,
         localId: const Uuid().v4(),
         syncStatus: MessageSyncStatus.pending,
         replyToId: replyToId,
@@ -197,13 +200,19 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
       await _hiveService.addMessage(chatRoomId, message);
 
       // 3. Update recent chats (for home screen)
+      String lastMsg = text;
+      if (type == 'image') {
+        // Simple heuristic for generic images or GIFs
+        lastMsg = caption ?? 'GIF';
+      }
+
       await _hiveService.updateRecentChat(
         userId: receiverId,
         username: receiverName,
         profileImage: null,
-        lastMessage: text,
+        lastMessage: lastMsg,
         lastMessageTimestamp: message.timestamp,
-        lastMessageStatus: 'sent',
+        lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
       );
 
@@ -223,9 +232,14 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String receiverId,
   ) async {
     try {
+      // Check if message was deleted before upload starts
+      if (!message.isInBox) {
+        debugPrint('🗑️ Message deleted locally, skipping upload');
+        return;
+      }
+
       // Mark as syncing
       message.syncStatus = MessageSyncStatus.syncing;
-
       await _hiveService.updateMessage(message);
 
       // Upload to Firestore using your existing ChatService
@@ -233,11 +247,12 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         receiverId,
         message.message,
         localId: message.localId,
-        message.status!,
         replyToId: message.replyToId,
         replyToMessage: message.replyToMessage,
         replyToSender: message.replyToSender,
         replyToType: message.replyToType,
+        type: message.type,
+        caption: message.caption,
       );
 
       // Note: We don't mark as synced here because Firestore listener will do it
@@ -256,6 +271,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     required String fileName,
     Uint8List? imageBytes,
     String? videoPath,
+    String? imagePath,
     String? caption,
     String? replyToId,
     String? replyToMessage,
@@ -285,10 +301,10 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         timestamp: DateTime.now(),
         type: type,
         caption: caption,
-        status: 'sent',
+        status: 'pending',
         localId: const Uuid().v4(),
         syncStatus: MessageSyncStatus.pending,
-        localFilePath: videoPath, // For video, store local path
+        localFilePath: videoPath ?? imagePath, // Store local path
         replyToId: replyToId,
         replyToMessage: replyToMessage,
         replyToSender: replyToSender,
@@ -309,7 +325,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         profileImage: null,
         lastMessage: lastMsg,
         lastMessageTimestamp: message.timestamp,
-        lastMessageStatus: 'sent',
+        lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
       );
 
@@ -338,6 +354,12 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String? videoPath,
   }) async {
     try {
+      // Check if message was deleted before upload starts
+      if (!message.isInBox) {
+        debugPrint('🗑️ Message deleted locally, skipping upload');
+        return;
+      }
+
       // Mark as syncing
       message.syncStatus = MessageSyncStatus.syncing;
       await _hiveService.updateMessage(message);
@@ -397,7 +419,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         message: '', // Will be Firebase URL after upload
         timestamp: DateTime.now(),
         type: 'voice',
-        status: 'sent',
+        status: 'pending',
         voiceDuration: duration,
         localId: const Uuid().v4(),
         syncStatus: MessageSyncStatus.pending,
@@ -418,7 +440,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         profileImage: null,
         lastMessage: '🎤 Voice message',
         lastMessageTimestamp: message.timestamp,
-        lastMessageStatus: 'sent',
+        lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
       );
 
@@ -438,6 +460,12 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String receiverId,
   ) async {
     try {
+      // Check if message was deleted before upload starts
+      if (!message.isInBox) {
+        debugPrint('🗑️ Message deleted locally, skipping upload');
+        return;
+      }
+
       // Mark as syncing
       message.syncStatus = MessageSyncStatus.syncing;
       await _hiveService.updateMessage(message);

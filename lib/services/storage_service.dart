@@ -3,6 +3,18 @@ import 'dart:typed_data';
 import 'package:firebase_storage/firebase_storage.dart';
 
 class StorageService {
+
+    // DELETE CHAT WALLPAPER FILE
+    Future<void> deleteChatWallpaperFile(String? wallpaperUrl) async {
+      if (wallpaperUrl == null || wallpaperUrl.isEmpty) return;
+      try {
+        final ref = _storage.refFromURL(wallpaperUrl);
+        await ref.delete();
+        print('Deleted chat wallpaper from storage.');
+      } catch (e) {
+        print('Error deleting chat wallpaper: $e');
+      }
+    }
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   //  UPLOAD PROFILE PHOTO

@@ -113,13 +113,14 @@ class ChatService extends ChangeNotifier {
   // send message
   Future<void> sendMessage(
     String receiverID,
-    String message,
-    String status, {
+    String message, {
     String? localId,
     String? replyToId,
     String? replyToMessage,
     String? replyToSender,
     String? replyToType,
+    String type = 'text',
+    String? caption,
   }) async {
     final String currentUserID = _auth.currentUser!.uid;
     final String currentUserEmail = _auth.currentUser!.email!;
@@ -141,7 +142,9 @@ class ChatService extends ChangeNotifier {
       timestamp: timestamp.toDate(),
       localId: localId ?? const Uuid().v4(),
       senderName: username,
-      status: status,
+      status: MessageStatus.sent,
+      type: type,
+      caption: caption,
       replyToId: replyToId,
       replyToMessage: replyToMessage,
       replyToSender: replyToSender,
@@ -166,11 +169,22 @@ class ChatService extends ChangeNotifier {
         .doc()
         .set({});
 
+    // Determine last message text
+    String lastMsg = message;
+    if (type == 'image') {
+      lastMsg = caption ?? '📷 Photo';
+      if (message.contains('giphy') || type == 'image') {
+        lastMsg = caption ?? 'GIF';
+      }
+    } else if (type == 'video') {
+      lastMsg = caption ?? '🎥 Video';
+    }
+
     await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
       'participants': [currentUserID, receiverID],
-      'lastMessage': message,
+      'lastMessage': lastMsg,
       'lastMessageTimestamp': timestamp,
-      'lastMessageStatus': status,
+      'lastMessageStatus': 'sent',
       'lastSenderId': currentUserID,
     }, SetOptions(merge: true));
   }
@@ -213,7 +227,7 @@ class ChatService extends ChangeNotifier {
             }
 
             batch.commit();
-            print("Delivered ${snapshot.docs.length} messages globally.");
+            debugPrint("Delivered ${snapshot.docs.length} messages globally.");
           }
         });
   }
@@ -547,6 +561,7 @@ class ChatService extends ChangeNotifier {
       senderEmail: currentUserEmail,
       senderName: username,
       receiverID: receiverID,
+      status: MessageStatus.sent,
       message: voiceUrl,
       timestamp: timestamp.toDate(),
       type: 'voice',
@@ -668,6 +683,7 @@ class ChatService extends ChangeNotifier {
       receiverID: receiverID,
       message: mediaUrl,
       caption: caption,
+      status: MessageStatus.sent,
       localId: localId ?? const Uuid().v4(),
       timestamp: timestamp.toDate(),
       type: type,
@@ -732,6 +748,109 @@ class ChatService extends ChangeNotifier {
             'wallpaper': {currentUserID: wallpaperUrl},
           }, SetOptions(merge: true));
         });
+  }
+
+  // Set Chat Wallpaper (Solid Color)
+  Future<void> setChatWallpaperColor(
+    String receiverID,
+    String hexColorCode,
+  ) async {
+    final currentUserID = _auth.currentUser!.uid;
+
+    // Construct chat room ID
+    List<String> ids = [currentUserID, receiverID];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    final chatRoomRef = _firestore.collection('Chat_rooms').doc(chatRoomId);
+
+    final docSnapshot = await chatRoomRef.get();
+    if (docSnapshot.exists) {
+      final data = docSnapshot.data();
+      if (data != null && data.containsKey('wallpaper')) {
+        final wallpaperMap = data['wallpaper'] as Map<String, dynamic>;
+        final String? oldValue = wallpaperMap[currentUserID];
+
+        // If the old value is a URL (starts with http), delete the file.
+        if (oldValue != null && oldValue.startsWith('http')) {
+          await _storageService.deleteChatWallpaperFile(oldValue);
+        }
+      }
+    }
+
+    //  SAVE THE COLOR STRING
+    await chatRoomRef.set({
+      'wallpaper': {currentUserID: hexColorCode},
+    }, SetOptions(merge: true));
+  }
+
+  // Delete Chat Wallpaper
+  Future<void> deleteChatWallpaper(String receiverID) async {
+    final currentUserID = _auth.currentUser!.uid;
+    List<String> ids = [currentUserID, receiverID];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    final chatRoomRef = _firestore.collection('Chat_rooms').doc(chatRoomId);
+    final chatRoomDoc = await chatRoomRef.get();
+    if (!chatRoomDoc.exists) return;
+    final data = chatRoomDoc.data();
+    if (data == null || !data.containsKey('wallpaper')) return;
+    final wallpaperMap = data['wallpaper'] as Map<String, dynamic>?;
+    if (wallpaperMap == null || !wallpaperMap.containsKey(currentUserID)) {
+      return;
+    }
+    final wallpaperUrl = wallpaperMap[currentUserID] as String;
+
+    // Remove wallpaper entry for this user
+    wallpaperMap.remove(currentUserID);
+    await chatRoomRef.update({'wallpaper': wallpaperMap});
+
+    // Delete wallpaper file from storage
+    if (wallpaperUrl.startsWith('http')) {
+      await _storageService.deleteChatWallpaperFile(wallpaperUrl);
+    }
+  }
+
+  // Pin Message
+  Future<void> pinMessage(String receiverId, Message message) async {
+    final currentUserId = _auth.currentUser!.uid;
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    String displayContent = message.message;
+    if (message.type == 'image' || message.type == 'video') {
+      displayContent =
+          message.caption ??
+          (message.type == 'video' ? '🎥 Video' : '📷 Photo');
+    } else if (message.type == 'voice') {
+      displayContent = '🎤 Voice message';
+    }
+
+    await _firestore.collection('Chat_rooms').doc(chatRoomId).update({
+      'pinnedMessage': {
+        'id': message
+            .localId, // or firestore ID if available, but localId is safer for hive sync
+        'message': displayContent,
+        'originalMessage': message.message, // store original url/text
+        'type': message.type,
+        'senderId': message.senderID,
+        'timestamp': message.timestamp,
+      },
+    });
+  }
+
+  // Unpin Message
+  Future<void> unpinMessage(String receiverId) async {
+    final currentUserId = _auth.currentUser!.uid;
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    await _firestore.collection('Chat_rooms').doc(chatRoomId).update({
+      'pinnedMessage': FieldValue.delete(),
+    });
   }
 
   // get chat stream
@@ -846,9 +965,7 @@ class ChatService extends ChangeNotifier {
     });
   }
 
-  // ======================== ONLINE STATUS ========================
-
-  /// Update current user's online status
+  // Update current user's online status
   Future<void> setOnlineStatus(bool isOnline) async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -859,7 +976,7 @@ class ChatService extends ChangeNotifier {
     });
   }
 
-  /// Stream to listen for a user's online status
+  // Stream to listen for a user's online status
   Stream<Map<String, dynamic>> getUserOnlineStatus(String userId) {
     return _firestore.collection('Users').doc(userId).snapshots().map((
       snapshot,

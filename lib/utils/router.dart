@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social/providers/auth_provider.dart';
-import 'package:social/screens/Edit_video_screen.dart';
+import 'package:social/screens/edit_video_screen.dart';
 import 'package:social/screens/blocked_user_screen.dart';
+import 'package:social/screens/chat_media_screen.dart';
 import 'package:social/screens/chat_profile_screen.dart';
 import 'package:social/screens/chat_screen.dart';
 import 'package:social/screens/home_screen.dart';
@@ -80,8 +81,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/chat_profile/:uid',
         builder: (context, state) {
           final uid = state.pathParameters['uid']!;
-
           return ChatProfileScreen(receiverId: uid);
+        },
+      ),
+
+      // CHAT MEDIA SCREEN
+      GoRoute(
+        path: '/chat_media/:uid',
+        builder: (context, state) {
+          final uid = state.pathParameters['uid']!;
+          return ChatMediaScreen(receiverId: uid);
         },
       ),
 
@@ -113,6 +122,8 @@ final routerProvider = Provider<GoRouter>((ref) {
             imageUrl: data['photoUrl'],
             caption: data['caption'],
             isProfile: data['isProfile'] ?? false,
+            senderName: data['senderName'],
+            timestamp: data['timestamp'],
           );
         },
       ),
@@ -120,6 +131,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       // SHELL ROUTE
       ShellRoute(
         builder: (context, state, child) => Scaffold(
+          extendBody: true,
           bottomNavigationBar: const MyBottomNavBar(),
           backgroundColor: Theme.of(context).colorScheme.surface,
           body: child,

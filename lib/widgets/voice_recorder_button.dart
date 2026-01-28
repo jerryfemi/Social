@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:social/services/audio_service.dart';
+import 'package:social/widgets/liquid_glass.dart';
 
 class VoiceRecorderButton extends StatefulWidget {
   final Function(String path, int duration) onRecordingComplete;
@@ -28,7 +29,7 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
   bool _isRecording = false;
   bool _isLocked = false;
   bool _isCancelled = false;
-  bool _isHolding = false; 
+  bool _isHolding = false;
   int _recordingSeconds = 0;
   Timer? _timer;
   double _dragOffsetX = 0;
@@ -287,13 +288,25 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
   }
 
   Widget _buildMicButton(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primary,
-        shape: BoxShape.circle,
+    return LiquidGlass(
+      borderRadius: 30,
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          // color: Theme.of(context).colorScheme.primary,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Theme.of(
+              context,
+            ).colorScheme.inverseSurface.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Icon(
+          Icons.mic,
+          color: Theme.of(context).colorScheme.primary,
+          size: 24,
+        ),
       ),
-      child: Icon(Icons.mic, color: Colors.white, size: 24),
     );
   }
 
@@ -347,14 +360,22 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
   Widget _buildDeleteButton() {
     return GestureDetector(
       onTap: () => _stopRecording(cancel: true),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        margin: const EdgeInsets.only(right: 8),
-        decoration: BoxDecoration(
-          color: Colors.red.withValues(alpha: 0.1),
-          shape: BoxShape.circle,
+      child: LiquidGlass(
+        borderRadius: 30,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          margin: const EdgeInsets.only(right: 8),
+          decoration: BoxDecoration(
+            // color: Colors.red.withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Theme.of(
+                context,
+              ).colorScheme.inverseSurface.withValues(alpha: 0.2),
+            ),
+          ),
+          child: const Icon(Icons.delete_outline, color: Colors.red, size: 24),
         ),
-        child: const Icon(Icons.delete_outline, color: Colors.red, size: 24),
       ),
     );
   }
@@ -433,13 +454,21 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
   Widget _buildSendButton(ThemeData theme) {
     return GestureDetector(
       onTap: () => _stopRecording(cancel: false),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primary,
-          shape: BoxShape.circle,
+      child: LiquidGlass(
+        borderRadius: 30,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            // color: theme.colorScheme.primary,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: Theme.of(
+                context,
+              ).colorScheme.inverseSurface.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Icon(Icons.send, color: theme.colorScheme.primary, size: 24),
         ),
-        child: Icon(Icons.send, color: theme.colorScheme.onPrimary, size: 24),
       ),
     );
   }

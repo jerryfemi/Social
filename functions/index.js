@@ -14,6 +14,8 @@ exports.sendChatNotification = functions.firestore
     const messageContent = messageData.message;
     const type = messageData.type;
     const photoUrl = messageData.senderPhotoUrl || '';
+    const timestamp = messageData.timestamp ? messageData.timestamp.toDate().toISOString() : new Date().toISOString();
+    const localId = messageData.localId || '';
 
     console.log(`New message from ${senderName} to ${receiverId}`);
 
@@ -70,11 +72,16 @@ exports.sendChatNotification = functions.firestore
           },
         },
         data: {
-          chatRoomId: context.params.chatRoomId,
+          clickAction: "FLUTTER_NOTIFICATION_CLICK",
           senderID: senderId,
+          receiverId: receiverId,
           senderName: senderName,
           photoUrl: photoUrl,
-          type: "chat_message",
+          type: type,
+          message: messageContent,
+          timestamp: timestamp,
+          localId: localId,
+          chatRoomId: context.params.chatRoomId,
         },
       };
 

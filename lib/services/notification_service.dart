@@ -22,6 +22,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   debugPrint("🌙 BACKGROUND PAYLOAD: ${message.data}");
 
+  // CHECK: If no user is logged in (or token invalid), don't process
+  // Note: In background isolate, FirebaseAuth.currentUser might need reload or might be null if signed out.
+  final currentUser = FirebaseAuth.instance.currentUser;
+  if (currentUser == null) {
+    debugPrint("🌙 Background: No user logged in, ignoring message.");
+    return;
+  }
+
   // 2. Initialize Hive (Critical for offline saving)
   await Hive.initFlutter();
 
@@ -37,6 +45,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     // Extract info
     final senderId = data['senderID'] as String?;
     final receiverId = data['receiverID'] as String?;
+
+    // SECURITY CHECK: Ensure this message is meant for the signed-in user
+    if (receiverId != currentUser.uid) {
+      debugPrint(
+        "🌙 Background: Message for $receiverId but logged in as ${currentUser.uid}. Ignoring.",
+      );
+      return;
+    }
 
     if (senderId != null && receiverId != null) {
       // Construct chat room ID
@@ -159,9 +175,13 @@ class NotificationService {
     AndroidNotification? android = message.notification?.android;
 
     final String? senderId = message.data['senderID'];
+    final String? receiverId = message.data['receiverID'];
 
     // Don't show if we are currently looking at this chat
     if (senderId == _currentChatUserId) return;
+
+    // Don't show if this notification is not for us
+    if (receiverId != _auth.currentUser?.uid) return;
 
     if (notification != null && android != null) {
       _localNotifications.show(

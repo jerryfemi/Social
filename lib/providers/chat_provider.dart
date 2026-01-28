@@ -17,24 +17,7 @@ final userProfileProvider = StreamProvider.family<DocumentSnapshot, String>((
   return chatService.getUserStream(id);
 });
 
-// // 1. RECENT CHATS - with caching support
-// final recentChatsProvider = StreamProvider<List<Map<String, dynamic>>>((ref) {
-//   final authState = ref.watch(authStateProvider);
 
-//   final user = authState.value;
-//   if (user == null) {
-//     return Stream.empty();
-//   }
-
-//   final chatService = ref.watch(chatServiceProvider);
-
-//   // Return a stream that emits cached data first, then live data
-//   return chatService.getRecentChats(user.uid).map((chats) {
-//     // Cache the data whenever we get fresh data from Firestore
-//     CacheService.cacheRecentChats(chats);
-//     return chats;
-//   });
-// });
 
 
 
