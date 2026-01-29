@@ -15,6 +15,7 @@ import 'package:social/services/notification_service.dart';
 
 import 'package:social/widgets/chat_app_bar.dart';
 import 'package:social/widgets/chat_input_bar.dart';
+import 'package:social/widgets/liquid_glass.dart';
 import 'package:social/widgets/message_list_view.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
 import 'package:social/widgets/pinned_message.dart';
@@ -54,6 +55,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // SELECTION MODE STATE
   final Set<String> _selectedMessageIds = {};
   bool _isSelectionMode = false;
+  bool _showScrollToBottom = false;
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final show = _scrollController.offset > 300;
+    if (show != _showScrollToBottom) {
+      setState(() {
+        _showScrollToBottom = show;
+      });
+    }
+  }
 
   void _enterSelectionMode(String messageId) {
     setState(() {
@@ -95,6 +107,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     // Tell notification service we're in this chat (suppress notifications from this user)
     _notificationService.setCurrentChat(widget.receiverId);
   }
@@ -166,10 +179,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     String senderName,
   ) {
     setState(() {
-      _replyingTo = data;
+      _replyingTo = {
+        'messageId': messageId,
+        'senderName': senderName,
+        'message': data['message'],
+        'type': data['type'] ?? 'text',
+      };
     });
-    // Request focus logic is currently disconnected until FocusNode is shared with ChatInputBar
-    // _focusNode.requestFocus();
+    _focusNode.requestFocus();
   }
 
   // Clear reply
@@ -539,7 +556,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         if (wallpaperUrl != null && !wallpaperUrl.startsWith('http')) {
           try {
             Color rawColor = Color(int.parse(wallpaperUrl));
-            // Darken it slightly (10% towards black) for visual separation
+            // Darken it significantly (40% towards black) for better legibility and aesthetics
             appBarColor = Color.lerp(rawColor, Colors.black, 0.1);
           } catch (_) {}
         }
@@ -549,13 +566,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // TextInputField Color
     Color? inputBackgroundColor;
     if (appBarColor != null) {
-      // use app bar color if its not null
-      inputBackgroundColor = appBarColor;
+      // Make input field slightly darker than the app bar for "recessed" depth effect
+      inputBackgroundColor = Color.lerp(appBarColor, Colors.black, 0.1);
     } else {
-      //else use secondary color scheme
+      // Default: Use a translucent dark surface for modern look
       inputBackgroundColor = Theme.of(
         context,
-      ).colorScheme.secondary.withValues(alpha: 0.7);
+      ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5);
     }
 
     bool isImageUrl = false;
@@ -573,25 +590,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     }
 
-    final backgroundColor =
-        (!isImageUrl && appBarColor != null)
-            ? appBarColor.withValues(alpha: 1.0)
-            : null;
+    final backgroundColor = (!isImageUrl && appBarColor != null)
+        ? appBarColor.withValues(alpha: 1.0)
+        : null;
 
     // Calculate Navigation Bar Color & Icon Brightness
     Color sysNavBarColor = Theme.of(context).colorScheme.surface;
     Brightness sysNavBarIconBrightness =
         Theme.of(context).brightness == Brightness.dark
-            ? Brightness.light
-            : Brightness.dark;
+        ? Brightness.light
+        : Brightness.dark;
 
     if (backgroundColor != null) {
       sysNavBarColor = backgroundColor;
       sysNavBarIconBrightness =
           ThemeData.estimateBrightnessForColor(backgroundColor) ==
-                  Brightness.dark
-              ? Brightness.light
-              : Brightness.dark;
+              Brightness.dark
+          ? Brightness.light
+          : Brightness.dark;
     } else if (isImageUrl && wallpaperUrl != null) {
       sysNavBarColor = Colors.transparent;
       sysNavBarIconBrightness = Brightness.light;
@@ -613,33 +629,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               await _setWallpaper();
             }
           },
-          itemBuilder:
-              (context) => const [
-                PopupMenuItem<String>(
-                  value: 'set_wallpaper',
-                  child: Row(
-                    children: [
-                      Icon(Icons.wallpaper, size: 20),
-                      SizedBox(width: 8),
-                      Text('Set wallpaper'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'solid_color',
-                  child: Row(
-                    children: [
-                      Icon(Icons.format_paint_rounded, size: 20),
-                      SizedBox(width: 8),
-                      Text('Background Color'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<String>(
-                  value: 'reset_wallpaper',
-                  child: Text('Reset chat wallpaper'),
-                ),
-              ],
+          itemBuilder: (context) => const [
+            PopupMenuItem<String>(
+              value: 'set_wallpaper',
+              child: Row(
+                children: [
+                  Icon(Icons.wallpaper, size: 20),
+                  SizedBox(width: 8),
+                  Text('Set wallpaper'),
+                ],
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'solid_color',
+              child: Row(
+                children: [
+                  Icon(Icons.format_paint_rounded, size: 20),
+                  SizedBox(width: 8),
+                  Text('Background Color'),
+                ],
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'reset_wallpaper',
+              child: Text('Reset chat wallpaper'),
+            ),
+          ],
         ),
       ];
     }
@@ -653,11 +668,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         isSelectionMode: _isSelectionMode,
         selectedCount: _selectedMessageIds.length,
         actions: appBarActions,
-        onProfileTap:
-            () => context.push(
-              '/chat_profile/${widget.receiverId}',
-              extra: widget.photoUrl,
-            ),
+        onProfileTap: () => context.push(
+          '/chat_profile/${widget.receiverId}',
+          extra: widget.photoUrl,
+        ),
       ),
       body: Column(
         children: [
@@ -698,13 +712,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 decoration: BoxDecoration(
                   color:
                       backgroundColor ?? Theme.of(context).colorScheme.surface,
-                  image:
-                      (isImageUrl && wallpaperUrl != null)
-                          ? DecorationImage(
-                            image: CachedNetworkImageProvider(wallpaperUrl),
-                            fit: BoxFit.cover,
-                          )
-                          : null,
+                  image: (isImageUrl && wallpaperUrl != null)
+                      ? DecorationImage(
+                          image: CachedNetworkImageProvider(wallpaperUrl),
+                          fit: BoxFit.cover,
+                        )
+                      : null,
                 ),
                 child: Stack(
                   children: [
@@ -719,6 +732,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         selectedMessageIds: _selectedMessageIds,
                         onEnterSelectionMode: _enterSelectionMode,
                         onToggleSelection: _toggleSelection,
+                        onScrollToMessage: (id) => _scrollToMessage(id),
                         onReply: _setReplyTo,
                         highlightedMessageId: _highlightedMessageId,
                       ),
@@ -731,6 +745,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       right: 0,
                       child: _buildMessageInput(context, inputBackgroundColor),
                     ),
+
+                    // Scroll Down Button (Visible only when scrolled up)
+                    if (_showScrollToBottom)
+                      Positioned(
+                        bottom: 90,
+                        right: 15,
+                        child: GestureDetector(
+                          onTap: _scrollDown,
+                          child: LiquidGlass(borderRadius: 30,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+
+                                shape: BoxShape.circle,
+                               
+                              ),
+                              child: Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -748,6 +788,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       receiverName: widget.receiverName,
       replyingTo: _replyingTo,
       onCancelReply: _clearReply,
+      focusNode: _focusNode,
+      inputBackgroundColor: inputBackgroundColor,
       onMessageSent: () {
         _setTyping(false);
         _scrollDown();

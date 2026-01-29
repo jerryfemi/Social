@@ -108,7 +108,13 @@ class NotificationService {
   }
 
   Future<void> clearAllNotifications() async {
-    await _localNotifications.cancelAll();
+    try {
+      await _localNotifications.cancelAll();
+    } catch (e) {
+      debugPrint(
+        'Failed to clear notifications (likely unsupported on this platform): $e',
+      );
+    }
   }
 
   Future<void> initNotifications() async {

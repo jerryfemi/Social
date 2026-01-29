@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,7 +14,6 @@ import 'package:social/widgets/attachment_picker_sheet.dart';
 import 'package:social/widgets/liquid_glass.dart';
 import 'package:social/widgets/voice_recorder_button.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
-import 'dart:typed_data';
 
 class ChatInputBar extends ConsumerStatefulWidget {
   final String receiverId;
@@ -22,6 +21,8 @@ class ChatInputBar extends ConsumerStatefulWidget {
   final Map<String, dynamic>? replyingTo;
   final VoidCallback onCancelReply;
   final VoidCallback onMessageSent;
+  final FocusNode? focusNode;
+  final Color? inputBackgroundColor;
 
   const ChatInputBar({
     super.key,
@@ -30,6 +31,8 @@ class ChatInputBar extends ConsumerStatefulWidget {
     required this.replyingTo,
     required this.onCancelReply,
     required this.onMessageSent,
+    this.focusNode,
+    this.inputBackgroundColor,
   });
 
   @override
@@ -39,7 +42,8 @@ class ChatInputBar extends ConsumerStatefulWidget {
 class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   final _messageController = TextEditingController();
   final authService = AuthService();
-  final FocusNode _focusNode = FocusNode();
+  // Use passed focus node or create local fallback
+  late FocusNode _focusNode;
 
   bool _showAttachments = false;
   bool _showEmojiPicker = false;
@@ -63,16 +67,19 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   @override
   void initState() {
     super.initState();
+    _focusNode = widget.focusNode ?? FocusNode();
     _messageController.addListener(_onTextChanged);
 
     // Listen to focus to auto-hide attachments
-    _focusNode.addListener(() {
-      if (_focusNode.hasFocus) {
-        setState(() {
-          _showAttachments = false;
-        });
-      }
-    });
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      setState(() {
+        _showAttachments = false;
+      });
+    }
   }
 
   @override
@@ -80,7 +87,11 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     _typingTimer?.cancel();
     _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
-    _focusNode.dispose();
+    _focusNode.removeListener(_onFocusChange);
+    // Only dispose if we created it locally
+    if (widget.focusNode == null) {
+      _focusNode.dispose();
+    }
 
     // Clear typing status if we leave
     if (_isTyping) {
@@ -147,33 +158,14 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     final mediaName = _selectedImageName;
     final isVideo = _selectedMediaType == 'video';
 
-    // Capture reply data
-    final replyToId = widget.replyingTo != null
-        ? (widget.replyingTo!['messageId'] as String?)
-        : null; // Note: In original code it was using separate variables
-
-    // Wait, the original code stored _replyingTo (Map), _replyingToId (String), _replyingToSender (String) separately.
-    // We need to support that structure or adapt.
-    // Adapting to use the Map passed in widget.replyingTo which should contain all needed info.
-    // Let's assume widget.replyingTo contains: { 'data': map, 'id': string, 'sender': string }
-    // Or we just look at how ChatScreen constructs it.
-    // Original: _setReplyTo(data, messageId, senderName) sets _replyingTo = data; _replyingToId = messageId...
-    // We should simplify: pass a "ReplyContext" object or just use the Map if it has everything.
-    // For now, let's look at what ChatScreen passes.
-    // We will assume widget.replyingTo is the "context" map containing key info.
-
-    // Let's fix the Reply Logic in ChatScreen later to pass a nice object.
-    // For now, let's assume widget.replyingTo IS the map containing:
-    // 'id', 'sender', 'message', 'type'
-
     String? rId;
     String? rMessage;
     String? rSender;
     String? rType;
 
     if (widget.replyingTo != null) {
-      rId = widget.replyingTo!['id'];
-      rSender = widget.replyingTo!['sender'];
+      rId = widget.replyingTo!['messageId'];
+      rSender = widget.replyingTo!['senderName'];
       rMessage = widget.replyingTo!['message'];
       rType = widget.replyingTo!['type'];
     }
@@ -234,8 +226,8 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     String? rType;
 
     if (widget.replyingTo != null) {
-      rId = widget.replyingTo!['id'];
-      rSender = widget.replyingTo!['sender'];
+      rId = widget.replyingTo!['messageId'];
+      rSender = widget.replyingTo!['senderName'];
       rMessage = widget.replyingTo!['message'];
       rType = widget.replyingTo!['type'];
     }
@@ -273,8 +265,8 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     String? rType;
 
     if (widget.replyingTo != null) {
-      rId = widget.replyingTo!['id'];
-      rSender = widget.replyingTo!['sender'];
+      rId = widget.replyingTo!['messageId'];
+      rSender = widget.replyingTo!['senderName'];
       rMessage = widget.replyingTo!['message'];
       rType = widget.replyingTo!['type'];
     }
@@ -404,9 +396,9 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     // If you want strict style matching, we can pass `inputBackgroundColor` as a prop.
     // Let's assume the parent styling handles the background of the screen,
     // and this bar floats. We can use the theme.
-    final inputBackgroundColor = Theme.of(
-      context,
-    ).colorScheme.secondary.withValues(alpha: 0.7);
+    final inputBackgroundColor =
+        widget.inputBackgroundColor ??
+        Theme.of(context).colorScheme.secondary.withValues(alpha: 0.7);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -466,7 +458,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   }
 
   Widget _buildReplyPreview() {
-    final rSender = widget.replyingTo!['sender'] ?? '';
+    final rSender = widget.replyingTo!['senderName'] ?? '';
     final rMessage = widget.replyingTo!['message'] ?? '';
     final rType = widget.replyingTo!['type'] ?? 'text';
 
@@ -597,6 +589,17 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
             decoration: BoxDecoration(
               color: inputBackgroundColor,
               borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.12),
+                width: 0.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
             ),
             child: TextField(
               focusNode: _focusNode,

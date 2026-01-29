@@ -19,6 +19,7 @@ class MessageListView extends ConsumerStatefulWidget {
   final Function(String) onEnterSelectionMode;
   final Function(String) onToggleSelection;
   final Function(Map<String, dynamic>, String, String) onReply;
+  final Function(String) onScrollToMessage;
   final String? highlightedMessageId;
 
   const MessageListView({
@@ -32,6 +33,7 @@ class MessageListView extends ConsumerStatefulWidget {
     required this.onEnterSelectionMode,
     required this.onToggleSelection,
     required this.onReply,
+    required this.onScrollToMessage,
     this.highlightedMessageId,
   });
 
@@ -49,9 +51,97 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
     if (widget.highlightedMessageId != null &&
         widget.highlightedMessageId != oldWidget.highlightedMessageId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToMessage(widget.highlightedMessageId!);
+        _scrollToHighlightedMessage();
       });
     }
+  }
+
+  bool _isScrollingToMessage = false;
+
+  Future<void> _scrollToHighlightedMessage() async {
+    final messageId = widget.highlightedMessageId;
+    if (messageId == null || _isScrollingToMessage) return;
+
+    _isScrollingToMessage = true;
+
+    try {
+      // Step 1: Check if already rendered (Fastest)
+      final key = _messageKeys[messageId];
+      if (key?.currentContext != null) {
+        await _scrollToExistingKey(key!);
+        return;
+      }
+
+      // Step 2: Find message index for off-screen jump
+      final messagesAsync = ref.read(chatMessagesProvider(widget.chatRoomId));
+      final messages = messagesAsync.asData?.value;
+      if (messages == null || messages.isEmpty) return;
+
+      final reversedMessages = messages.reversed.toList();
+      final targetIndex = reversedMessages.indexWhere(
+        (m) => m.localId == messageId,
+      );
+
+      if (targetIndex == -1) return;
+
+      // Step 3: Jump near the target using Ratio
+      // (Target / Total) * MaxScroll gives a decent approximation
+      await _jumpToApproximatePosition(targetIndex, reversedMessages.length);
+      if (!mounted) return;
+      // Step 4: Wait for render, then fine-tune
+      // Give the list a moment to build the items at the new offset
+      await Future(() {
+        if (mounted) return WidgetsBinding.instance.endOfFrame;
+      });
+      // Try finding the key again
+      // We might need to schedule a post-frame callback if it's still building
+      if (mounted) {
+        final keyAfterJump = _messageKeys[messageId];
+        if (keyAfterJump?.currentContext != null) {
+          await _scrollToExistingKey(keyAfterJump!);
+        }
+      }
+    } catch (e) {
+      debugPrint('Scroll error: $e');
+    } finally {
+      if (mounted) {
+        _isScrollingToMessage = false;
+      }
+    }
+  }
+
+  Future<void> _scrollToExistingKey(GlobalKey key) async {
+    final context = key.currentContext;
+    if (context != null && context.mounted) {
+      await Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+        alignment: 0.5,
+      );
+    }
+  }
+
+  Future<void> _jumpToApproximatePosition(
+    int targetIndex,
+    int totalCount,
+  ) async {
+    if (!widget.scrollController.hasClients) return;
+
+    final scrollController = widget.scrollController;
+    final maxScroll = scrollController.position.maxScrollExtent;
+
+    if (maxScroll <= 0) return;
+
+    // Calculate position
+    // Since reverse: true, index 0 is at bottom (position 0)
+    // and last index is at top (maxScrollExtent)
+    final ratio = targetIndex / totalCount;
+    final targetPosition = maxScroll * ratio;
+
+    // Use jumpTo for instant movement (prevents "scrolling past" huge lists)
+    // or animateTo for smoothness. Jump is safer for massive distances.
+    scrollController.jumpTo(targetPosition.clamp(0.0, maxScroll));
   }
 
   @override
@@ -195,7 +285,7 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
       isFirstInSequence: isFirstInSequence,
       isLastInSequence: isLastInSequence,
       onReply: () => widget.onReply(messageData, messageKey, name),
-      onReplyTap: _scrollToMessage,
+      onReplyTap: (id) => widget.onScrollToMessage(id),
       onLongPress: () {
         if (widget.isSelectionMode) {
           widget.onToggleSelection(message.localId);
@@ -209,27 +299,6 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
         }
       },
     );
-  }
-
-  void _scrollToMessage(String messageId) {
-    // Logic to scroll to message (might need to coordinate with scroll controller or search logic)
-    // For now, this internal logic mimics ChatScreen but we might need parent coordination
-    // if the target message isn't rendered?
-    // Actually, ListView.builder builds lazily. If message isn't built, GlobalKey context is null.
-    // This simple logic only works if message is in view or built.
-    // The previous implementation had the same limitation.
-
-    // We need to find the index of the message?
-    // For now, assume consistent behaviour.
-    final key = _messageKeys[messageId];
-    if (key?.currentContext != null) {
-      Scrollable.ensureVisible(
-        key!.currentContext!,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-        alignment: 0.5,
-      );
-    }
   }
 
   Widget _buildSkeletonMessages() {

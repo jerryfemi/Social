@@ -1,14 +1,18 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:social/widgets/link_preview_card.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-
+import 'package:linkify/linkify.dart';
 import 'package:social/utils/date_utils.dart';
 
 import 'package:social/widgets/voice_message_bubble.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ChatBubble extends ConsumerStatefulWidget {
   const ChatBubble({
@@ -671,62 +675,135 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
   // BUILD TEXT CONTENT
   Widget _buildTextContent(BuildContext context, String textTime) {
     final bool isEdited = widget.data['isEdited'] == true;
+    String message = widget.data['message'] ?? '';
+    final hasLink = _containsLink(message);
 
-    return SelectionArea(
-      child: Stack(
-        children: [
-          Text.rich(
-            TextSpan(
-              text: widget.data['message'],
-              style: TextStyle(
-                fontSize: 14,
-                color: widget.isSender ? Colors.white : Colors.black,
-              ),
-              children: [
-                WidgetSpan(child: SizedBox(width: isEdited ? 95 : 75)),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 0,
-            right: 0,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.isStarred)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 3),
-                    child: Icon(Icons.star, size: 12, color: Colors.orange),
-                  ),
-                if (isEdited)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 3),
-                    child: Text(
-                      'edited',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontStyle: FontStyle.italic,
-                        color: Colors.white60,
-                      ),
-                    ),
-                  ),
-                Text(
-                  textTime,
-                  style: TextStyle(fontSize: 10, color: Colors.white60),
-                ),
-                if (widget.isSender) ...[
-                  SizedBox(width: 3),
-                  StatusIcon(
-                    status: widget.data['status'] ?? 'read',
-                    syncStatus: widget.data['syncStatus'],
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
+    final List<LinkifyElement> elements = linkify(
+      message,
+      options: const LinkifyOptions(humanize: false),
+      linkifiers: [const EmailLinkifier(), const UrlLinkifier()],
     );
+
+    // 2. BUILD SPANS
+    List<InlineSpan> textSpans = [];
+
+    for (var element in elements) {
+      if (element is LinkableElement) {
+        // It's a link
+        textSpans.add(
+          TextSpan(
+            text: element.text,
+            style: TextStyle(
+              color: Colors.white,
+              decoration: TextDecoration.underline,
+            ),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () async {
+                final url = Uri.parse(element.url);
+                if (!await launchUrl(
+                  url,
+                  mode: LaunchMode.externalApplication,
+                )) {
+                  // Handle error
+                }
+              },
+          ),
+        );
+      } else {
+        // It's normal text
+        textSpans.add(
+          TextSpan(
+            text: element.text,
+            style: TextStyle(
+              fontSize: 14,
+              color: widget.isSender ? Colors.white : Colors.black,
+            ),
+          ),
+        );
+      }
+    }
+
+    textSpans.add(const WidgetSpan(child: SizedBox(width: 70)));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectionArea(
+          child: Stack(
+            children: [
+              Text.rich(TextSpan(children: textSpans)),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.isStarred)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 3),
+                        child: Icon(Icons.star, size: 12, color: Colors.orange),
+                      ),
+                    if (isEdited)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 3),
+                        child: Text(
+                          'edited',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontStyle: FontStyle.italic,
+                            color: Colors.white60,
+                          ),
+                        ),
+                      ),
+                    Text(
+                      textTime,
+                      style: TextStyle(fontSize: 10, color: Colors.white60),
+                    ),
+                    if (widget.isSender) ...[
+                      SizedBox(width: 3),
+                      StatusIcon(
+                        status: widget.data['status'] ?? 'read',
+                        syncStatus: widget.data['syncStatus'],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (hasLink)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: LinkPreviewCard(
+              url: _extractLink(message),
+              isSender: widget.isSender,
+            ),
+          ),
+      ],
+    );
+  }
+
+  // helper to check if message contains link
+  bool _containsLink(String text) {
+    final urlRegExp = RegExp(
+      r"((https?:www\.)|(https?:\/\/)|(www\.))[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9]{1,6}(\/[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)?",
+      caseSensitive: false,
+    );
+    return urlRegExp.hasMatch(text);
+  }
+
+  String _extractLink(String text) {
+    final urlRegExp = RegExp(
+      r"((https?:www\.)|(https?:\/\/)|(www\.))[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9]{1,6}(\/[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)?",
+      caseSensitive: false,
+    );
+    final match = urlRegExp.firstMatch(text)?.group(0);
+    if (match != null && !match.startsWith('http')) {
+      // AnyLinkPreview often needs http/https prefix
+      return 'https://$match';
+    }
+    return match ?? '';
   }
 }
 
