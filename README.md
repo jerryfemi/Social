@@ -1,6 +1,8 @@
-# Social Chat app 💬
+# Liquid Chat 💬
 
 A production-grade Flutter chat application built with a **local-first architecture**. This project combines a custom "Liquid Glass" UI aesthetic with a robust backend infrastructure using Firebase and Hive for offline capabilities.
+
+Screen Recording: https://drive.google.com/drive/folders/1FUzFNTzfIxn1GMWzGZBtV9otFmIRRT8R
 
 ## 📱 Screenshots
 
@@ -45,8 +47,6 @@ A production-grade Flutter chat application built with a **local-first architect
 
 1.  **Architect Complexity:** Design the data flow between Hive (local) and Firestore (remote) to ensure data consistency.
 2.  **Debug Platform Issues:** Resolve CORS restrictions on web builds and optimize image caching strategies.
-3.  **Refactor UI:** Modularize the "Liquid Glass" components to be reusable across the application.
-
 ## 🚀 Getting Started
 
 1.  **Clone the repository:**
