@@ -5,7 +5,7 @@ A production-grade Flutter chat application built with a **local-first architect
 ## 📱 Screenshots
 
 <div style="display: flex; overflow-x: auto; gap: 15px; padding-bottom: 10px;">
-  <img src="screenshots/homscreen.jfif" height="500" alt="Home Screen" />
+  <img src="screenshots/homescreen.jfif" height="500" alt="Home Screen" />
   <img src="screenshots/chatscreen.jfif" height="500" alt="Chat Main" />
   <img src="screenshots/chatscreen_1.jfif" height="500" alt="Chat Flow 1" />
   <img src="screenshots/chatscreen2.jfif" height="500" alt="Chat Flow 2" />
