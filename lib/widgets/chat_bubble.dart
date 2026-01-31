@@ -4,7 +4,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:social/widgets/link_preview_card.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -470,35 +469,79 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                                 height: 300,
                                 width: 250,
                                 fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return CachedNetworkImage(
+                                    imageUrl: message,
+                                    height: 300,
+                                    width: 250,
+                                    fit: BoxFit.cover,
+                                    placeholder: (context, url) => Skeleton.replace(
+                                      height: 300,
+                                      width: 250,
+                                      child: Container(
+                                        color: Colors.transparent.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                        height: 300,
+                                        width: 250,
+                                        child: Center(
+                                          child:
+                                              const CircularProgressIndicator(),
+                                        ),
+                                      ),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        Container(
+                                          height: 300,
+                                          width: 250,
+                                          color: Colors.grey[300],
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              const Icon(
+                                                Icons.broken_image,
+                                                color: Colors.red,
+                                                size: 40,
+                                              ),
+                                              const SizedBox(height: 5),
+                                              Text(
+                                                "Failed to load",
+                                                style: TextStyle(
+                                                  color: Colors.red,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                  );
+                                },
                               ))
                       : isGif
-                      ? Image.network(
-                          message,
+                      ? CachedNetworkImage(
+                          imageUrl: message,
                           height: 200,
                           width: 220,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(
-                                color: Colors.grey[300],
-                                height: 200,
-                                width: 220,
-                                child: const Icon(
-                                  Icons.broken_image,
-                                  color: Colors.red,
-                                ),
-                              ),
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Skeleton.replace(
+                          placeholder: (context, url) => Skeleton.replace(
+                            height: 200,
+                            width: 220,
+                            child: Container(
                               height: 200,
                               width: 220,
-                              child: Container(
-                                height: 200,
-                                width: 220,
-                                color: Colors.black12,
-                              ),
-                            );
-                          },
+                              color: Colors.black12,
+                            ),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            color: Colors.grey[300],
+                            height: 200,
+                            width: 220,
+                            child: const Icon(
+                              Icons.broken_image,
+                              color: Colors.red,
+                            ),
+                          ),
                         )
                       : CachedNetworkImage(
                           imageUrl: message,

@@ -965,6 +965,52 @@ class ChatService extends ChangeNotifier {
     });
   }
 
+  // Set user recording(audio) Status
+  Future<void> setRecordingStatus(String receiverId, bool isRecording) async {
+    final currentUserId = _auth.currentUser!.uid;
+
+    // construct chatroom id
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    String chatRoomId = ids.join('_');
+
+    _firestore.collection('Chat_rooms').doc(chatRoomId).set({
+      'recording': {currentUserId: isRecording ? Timestamp.now() : null},
+    }, SetOptions(merge: true));
+  }
+
+  Stream<bool> getRecordingStatus(String receiverId) {
+    final currentUserId = _auth.currentUser!.uid;
+
+    // construct chat room id
+    List<String> ids = [currentUserId, receiverId];
+    ids.sort();
+    final String chatRoomId = ids.join('_');
+
+    return _firestore.collection('Chat_rooms').doc(chatRoomId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return false;
+
+      final data = snapshot.data();
+      if (data == null || !data.containsKey('recording')) return false;
+
+      final recording = data['recording'] as Map<String, dynamic>?;
+      if (recording == null) return false;
+
+      final otherUserRecording = recording[receiverId];
+      if (otherUserRecording == null) return false;
+
+      // check if typing time is recent(within 5 seconds)
+      if (otherUserRecording is Timestamp) {
+        final recordingTime = otherUserRecording.toDate();
+        final now = DateTime.now();
+        return now.difference(recordingTime).inSeconds < 5;
+      }
+      return false;
+    });
+  }
+
   // Update current user's online status
   Future<void> setOnlineStatus(bool isOnline) async {
     final user = _auth.currentUser;

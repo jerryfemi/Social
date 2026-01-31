@@ -721,7 +721,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
                 child: Stack(
                   children: [
-                    // display messages (at bottom of stack)
+                    // MESSAGE LIST
                     Positioned.fill(
                       child: MessageListView(
                         chatRoomId: chatRoomId,
@@ -738,7 +738,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       ),
                     ),
 
-                    // Input (at top of stack, aligned to bottom)
+                    // MESSAGE INPUT
                     Positioned(
                       bottom: 0,
                       left: 0,
@@ -746,20 +746,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       child: _buildMessageInput(context, inputBackgroundColor),
                     ),
 
-                    // Scroll Down Button (Visible only when scrolled up)
+                    // SCROLL BUTTON()
                     if (_showScrollToBottom)
                       Positioned(
                         bottom: 90,
                         right: 15,
                         child: GestureDetector(
                           onTap: _scrollDown,
-                          child: LiquidGlass(borderRadius: 30,
+                          child: LiquidGlass(
+                            borderRadius: 30,
                             child: Container(
                               padding: const EdgeInsets.all(4),
                               decoration: BoxDecoration(
-
+                                color: Theme.of(context).colorScheme.primary,
                                 shape: BoxShape.circle,
-                               
                               ),
                               child: Icon(
                                 Icons.keyboard_arrow_down_rounded,

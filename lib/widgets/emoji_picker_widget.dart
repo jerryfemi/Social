@@ -97,10 +97,10 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
 
       //
       onEmojiSelected: (category, emoji) {
-        widget.controller.text = widget.controller.text + emoji.emoji;
-        widget.controller.selection = TextSelection.fromPosition(
-          TextPosition(offset: widget.controller.text.length),
-        );
+        // widget.controller.text = widget.controller.text + emoji.emoji;
+        // widget.controller.selection = TextSelection.fromPosition(
+        //   TextPosition(offset: widget.controller.text.length),
+        // );
       },
       onBackspacePressed: () {},
 

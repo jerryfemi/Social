@@ -87,6 +87,10 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       final onlineAsync = ref.watch(
                         onlineStatusProvider(receiverId),
                       );
+                      final recordingAsync = ref.watch(
+                        recordingStatusProvider(receiverId),
+                      );
+                      final isRecording = recordingAsync.value ?? false;
                       final isTyping = typingAsync.value ?? false;
                       final onlineData = onlineAsync.value;
                       final isOnline = onlineData?['isOnline'] ?? false;
@@ -95,6 +99,16 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       if (isTyping) {
                         return Text(
                           'typing...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.primary,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        );
+                      }
+                      if (isRecording) {
+                        return Text(
+                          'recording...',
                           style: TextStyle(
                             fontSize: 12,
                             color: Theme.of(context).colorScheme.primary,

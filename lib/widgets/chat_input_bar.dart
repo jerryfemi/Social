@@ -60,6 +60,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   // Typing State
   Timer? _typingTimer;
   bool _isTyping = false;
+  Timer? _recordingTimer;
   bool _hasText = false;
 
   final GlobalKey<VoiceRecorderButtonState> _voiceRecorderKey = GlobalKey();
@@ -85,6 +86,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   @override
   void dispose() {
     _typingTimer?.cancel();
+    _recordingTimer?.cancel();
     _messageController.removeListener(_onTextChanged);
     _messageController.dispose();
     _focusNode.removeListener(_onFocusChange);
@@ -96,6 +98,12 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     // Clear typing status if we leave
     if (_isTyping) {
       ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
+    }
+    // clear recording status
+    if (_isRecording) {
+      ref
+          .read(chatServiceProvider)
+          .setRecordingStatus(widget.receiverId, false);
     }
     super.dispose();
   }
@@ -129,6 +137,36 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
       _isTyping = false;
       ref.read(chatServiceProvider).setTypingStatus(widget.receiverId, false);
     }
+  }
+
+  void _setRecording(bool recording) {
+    if (!mounted) return;
+    setState(() {
+      if (recording) {
+        if (!_isRecording) {
+          _isRecording = true;
+          ref
+              .read(chatServiceProvider)
+              .setRecordingStatus(widget.receiverId, true);
+
+          // Start heartbeat to keep status alive
+          _recordingTimer?.cancel();
+          _recordingTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+            if (mounted) {
+              ref
+                  .read(chatServiceProvider)
+                  .setRecordingStatus(widget.receiverId, true);
+            }
+          });
+        }
+      } else {
+        _recordingTimer?.cancel();
+        _isRecording = false;
+        ref
+            .read(chatServiceProvider)
+            .setRecordingStatus(widget.receiverId, false);
+      }
+    });
   }
 
   void _toggleAttachments() {
@@ -247,7 +285,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
         replyToSender: rSender,
         replyToType: rType ?? 'text',
       );
-
+      _setRecording(false);
       widget.onCancelReply();
       widget.onMessageSent();
     } catch (e) {
@@ -390,12 +428,6 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
 
   @override
   Widget build(BuildContext context) {
-    // We can infer background color or pass it in.
-    // In ChatScreen it was dynamic based on wallpaper.
-    // For simplicity, we'll use a default or transparent.
-    // If you want strict style matching, we can pass `inputBackgroundColor` as a prop.
-    // Let's assume the parent styling handles the background of the screen,
-    // and this bar floats. We can use the theme.
     final inputBackgroundColor =
         widget.inputBackgroundColor ??
         Theme.of(context).colorScheme.secondary.withValues(alpha: 0.7);
@@ -411,7 +443,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
             bottom: 20,
             left: 15,
             right: 15,
-            top: 8,
+            top: 5,
           ),
           child: _buildNormalInput(context, inputBackgroundColor),
         ),
@@ -465,9 +497,6 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
     final isMedia = rType == 'image' || rType == 'video';
     final isVoice = rType == 'voice';
 
-    // We assume 'caption' might be in the 'data' map if we passed the whole map.
-    // For simplicity, let's just use what we extracted.
-
     String messageText;
     if (isVoice) {
       messageText = '🎤 Voice message';
@@ -481,7 +510,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.5),
+        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.8),
         borderRadius: BorderRadius.circular(12),
         border: Border(
           left: BorderSide(
@@ -543,44 +572,44 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
           setState(() => _isRecording = false);
           _sendVoiceMessage(path, duration);
         },
-        onRecordingStart: () {},
-        onRecordingCancel: () => setState(() => _isRecording = false),
+        onRecordingStart: () => _setRecording(true),
+        onRecordingCancel: () => _setRecording(false),
       );
     }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (!_isRecording)
-          _selectedImageBytes != null
-              ? _buildImageThumbnail()
-              : InkWell(
-                  borderRadius: BorderRadius.circular(25),
-                  onTap: _toggleAttachments,
-                  child: LiquidGlass(
-                    borderRadius: 30,
-                    child: Container(
-                      padding: EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.secondary.withValues(alpha: 0.2),
-                        ),
+        // if (!_isRecording)
+        _selectedImageBytes != null
+            ? _buildImageThumbnail()
+            : InkWell(
+                borderRadius: BorderRadius.circular(25),
+                onTap: _toggleAttachments,
+                child: LiquidGlass(
+                  borderRadius: 30,
+                  child: Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.secondary.withValues(alpha: 0.2),
                       ),
-                      child: AnimatedRotation(
-                        turns: _showAttachments ? 0.125 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: Icon(
-                          Icons.add,
-                          size: 26,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
+                    ),
+                    child: AnimatedRotation(
+                      turns: _showAttachments ? 0.125 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Icon(
+                        Icons.add,
+                        size: 26,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   ),
                 ),
+              ),
 
         const SizedBox(width: 10),
         const SizedBox(width: 10),
@@ -650,8 +679,8 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
           VoiceRecorderButton(
             key: _voiceRecorderKey,
             onRecordingComplete: _sendVoiceMessage,
-            onRecordingStart: () => setState(() => _isRecording = true),
-            onRecordingCancel: () => setState(() => _isRecording = false),
+            onRecordingStart: () => _setRecording(true),
+            onRecordingCancel: () => _setRecording(false),
           ),
       ],
     );

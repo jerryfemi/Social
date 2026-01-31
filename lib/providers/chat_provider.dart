@@ -17,10 +17,6 @@ final userProfileProvider = StreamProvider.family<DocumentSnapshot, String>((
   return chatService.getUserStream(id);
 });
 
-
-
-
-
 // 2. SEARCH
 final searchUsersProvider =
     StreamProvider.family<List<Map<String, dynamic>>, String>((ref, query) {
@@ -38,8 +34,6 @@ final messageProvider = StreamProvider.family<QuerySnapshot, String>((
 
   return chatService.getMessages(currentUser.uid, receiverID);
 });
-
-
 
 // CHAT STREAM PROVIDER
 final chatStreamProvider = StreamProvider.family<DocumentSnapshot, String>((
@@ -76,6 +70,15 @@ final typingStatusProvider = StreamProvider.family<bool, String>((
 ) {
   final chatService = ref.watch(chatServiceProvider);
   return chatService.getTypingStatus(receiverId);
+});
+
+//RECORDING STATUS PROVIDER
+final recordingStatusProvider = StreamProvider.family<bool, String>((
+  ref,
+  receiverId,
+) {
+  final chatService = ref.watch(chatServiceProvider);
+  return chatService.getRecordingStatus(receiverId);
 });
 
 // ONLINE STATUS PROVIDER
