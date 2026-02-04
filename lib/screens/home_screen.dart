@@ -9,6 +9,7 @@ import 'package:social/providers/recents_chats_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/chat_service.dart';
 import 'package:social/services/notification_service.dart';
+import 'package:social/services/sync_service.dart';
 import 'package:social/utils/date_utils.dart';
 import 'package:social/widgets/chat_bubble.dart';
 import 'package:social/widgets/my_sliver_app_bar.dart';
@@ -29,6 +30,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   final chatservice = ChatService();
   final authService = AuthService();
   final _notificationService = NotificationService();
+  final _syncService = SyncService();
   StreamSubscription? _deliverySubscription;
 
   @override
@@ -40,6 +42,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _deliverySubscription = chatservice.listenToIncomingMessages(
         authService.currentUser!.uid,
       );
+
+      // Initialize SyncService for offline retry
+      _syncService.init(authService.currentUser!.uid);
 
       // Process any pending notification navigation (from terminated state)
       _notificationService.processPendingNotification();

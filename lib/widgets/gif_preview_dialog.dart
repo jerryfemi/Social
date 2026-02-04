@@ -54,17 +54,16 @@ class _GifPreviewDialogState extends State<GifPreviewDialog> {
               borderRadius: BorderRadius.circular(12),
               child: CachedNetworkImage(
                 imageUrl: widget.gifUrl,
+                fit: BoxFit.contain,
                 placeholder: (context, url) => Container(
                   height: 200,
-                  color: Colors.grey[200],
-                  child: Center(child: CircularProgressIndicator()),
+                  color: Colors.grey[300],
+                  child: const Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                 ),
-                errorWidget: (context, url, error) => Container(
-                  height: 200,
-                  color: Colors.grey[200],
-                  child: Icon(Icons.error),
-                ),
-                fit: BoxFit.contain,
+                errorWidget: (context, url, error) =>
+                    const Icon(Icons.error, color: Colors.red),
               ),
             ),
             SizedBox(height: 16),

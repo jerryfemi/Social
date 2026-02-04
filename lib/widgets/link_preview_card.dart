@@ -2,8 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:metadata_fetch/metadata_fetch.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:social/services/link_preview_service.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
 
 class LinkPreviewCard extends StatefulWidget {
   final String url;
@@ -16,82 +16,53 @@ class LinkPreviewCard extends StatefulWidget {
 }
 
 class _LinkPreviewCardState extends State<LinkPreviewCard> {
+  final _linkPreviewService = LinkPreviewService();
+
   Metadata? _metadata;
   bool _isLoading = true;
-  String? _errorMessage;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    _fetchMetadata();
+    _loadMetadata();
   }
 
   @override
   void didUpdateWidget(LinkPreviewCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url) {
-      _fetchMetadata();
+      _loadMetadata();
     }
   }
 
-  Future<void> _fetchMetadata() async {
-    if (!mounted) return;
+  void _loadMetadata() {
+    // Check cache first - if cached, show immediately (no loading state)
+    final cached = _linkPreviewService.getCached(widget.url);
+    if (cached != null) {
+      setState(() {
+        _metadata = cached.metadata;
+        _hasError = cached.hasError;
+        _isLoading = false;
+      });
+      return;
+    }
+
+    // Not cached - show loading and fetch
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _hasError = false;
     });
 
-    try {
-      debugPrint("🔍 Fetching URL: ${widget.url}"); // DEBUG LOG
-
-      final response = await http.get(
-        Uri.parse(widget.url),
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        },
-      );
-
-      debugPrint("📡 Status Code: ${response.statusCode}"); // DEBUG LOG
-
-      if (response.statusCode == 200) {
-        // 1. Convert response to Document
-        final document = MetadataFetch.responseToDocument(response);
-
-        // 2. Parse Metadata
-        final data = MetadataParser.parse(document);
-        data.url = widget.url;
-
-        debugPrint("📄 Title found: ${data.title}"); // DEBUG LOG
-        debugPrint("🖼️ Image found: ${data.image}"); // DEBUG LOG
-
-        if (mounted) {
-          setState(() {
-            _metadata = data;
-            _isLoading = false;
-            if (data.title == null && data.image == null) {
-              _errorMessage = "No Metadata Found";
-            }
-          });
-        }
-      } else {
-        // Fallback for non-200 status
-        if (mounted) {
-          setState(() {
-            _errorMessage = "HTTP Error: ${response.statusCode}";
-            _isLoading = false;
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint("❌ CRITICAL ERROR: $e"); // DEBUG LOG
+    _linkPreviewService.getMetadata(widget.url).then((result) {
       if (mounted) {
         setState(() {
-          _errorMessage = "Exception: $e";
+          _metadata = result.metadata;
+          _hasError = result.hasError;
           _isLoading = false;
         });
       }
-    }
+    });
   }
 
   void _launchUrl() async {
@@ -103,9 +74,9 @@ class _LinkPreviewCardState extends State<LinkPreviewCard> {
 
   @override
   Widget build(BuildContext context) {
-    // ERROR STATE: Show Red Box instead of hiding
-    if (_errorMessage != null) {
-      return SizedBox.shrink();
+    // ERROR STATE: Hide if error
+    if (_hasError) {
+      return const SizedBox.shrink();
     }
 
     final cardColor = widget.isSender

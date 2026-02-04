@@ -6,12 +6,14 @@ class EmojiPickerWidget extends StatefulWidget {
   final TextEditingController controller;
   final ScrollController? scrollController;
   final TextEditingController? searchController;
+  final double? height;
 
   const EmojiPickerWidget({
     super.key,
     required this.controller,
     this.scrollController,
     this.searchController,
+    this.height,
   });
 
   @override
@@ -95,17 +97,8 @@ class _EmojiPickerWidgetState extends State<EmojiPickerWidget> {
       textEditingController: widget.controller,
       scrollController: widget.scrollController,
 
-      //
-      onEmojiSelected: (category, emoji) {
-        // widget.controller.text = widget.controller.text + emoji.emoji;
-        // widget.controller.selection = TextSelection.fromPosition(
-        //   TextPosition(offset: widget.controller.text.length),
-        // );
-      },
-      onBackspacePressed: () {},
-
       config: Config(
-        height: 256,
+        height: widget.height ?? 266,
         checkPlatformCompatibility: true,
 
         // view configuration

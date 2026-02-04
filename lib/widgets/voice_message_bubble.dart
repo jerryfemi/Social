@@ -14,6 +14,7 @@ class VoiceMessageBubble extends StatefulWidget {
   final Color bubbleColor;
   final String textTime;
   final String status;
+  final VoidCallback? onRetry;
 
   const VoiceMessageBubble({
     super.key,
@@ -25,6 +26,7 @@ class VoiceMessageBubble extends StatefulWidget {
     required this.textTime,
     required this.status,
     required this.syncStatus,
+    this.onRetry,
   });
 
   @override
@@ -49,6 +51,17 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
   final GlobalKey _waveformKey = GlobalKey();
   double _waveformWidth = 150; // Default fallback
 
+  /// Check if THIS voice message is currently playing (checks both URL and local path)
+  bool get _isThisAudioPlaying {
+    final localPath = widget.localFilePath;
+    final hasLocalPath = localPath != null && localPath.isNotEmpty;
+
+    // Check if either the URL or local path matches what's currently playing
+    if (_audioService.isPlayingUrl(widget.audioUrl)) return true;
+    if (hasLocalPath && _audioService.isPlayingUrl(localPath)) return true;
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -71,7 +84,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
 
     // Listen to actual duration from player (more accurate)
     _audioService.durationStream.listen((duration) {
-      if (_audioService.isPlayingUrl(widget.audioUrl) && mounted) {
+      if (_isThisAudioPlaying && mounted) {
         setState(() {
           _totalDuration = duration;
           _durationInitialized = true;
@@ -81,9 +94,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
 
     // Listen to position changes
     _audioService.positionStream.listen((position) {
-      if (_audioService.isPlayingUrl(widget.audioUrl) &&
-          mounted &&
-          !_isSeeking) {
+      if (_isThisAudioPlaying && mounted && !_isSeeking) {
         setState(() {
           _position = position;
           // Clamp position to not exceed duration
@@ -99,9 +110,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     _audioService.playerStateStream.listen((state) {
       if (mounted) {
         setState(() {
-          _isPlaying =
-              state == PlayerState.playing &&
-              _audioService.isPlayingUrl(widget.audioUrl);
+          _isPlaying = state == PlayerState.playing && _isThisAudioPlaying;
         });
 
         // Reset position when completed
@@ -127,10 +136,6 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
 
   @override
   void dispose() {
-    // Stop playing if this specific bubble is playing
-    if (_isPlaying) {
-      _audioService.stop();
-    }
     _scrubberScaleController.dispose();
     super.dispose();
   }
@@ -189,11 +194,16 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
     });
 
     // If this audio is currently loaded, seek it
-    if (_audioService.isPlayingUrl(widget.audioUrl)) {
+    if (_isThisAudioPlaying) {
       await _audioService.seek(seekPosition);
     } else {
       // Start playing from the seek position
-      await _audioService.play(widget.audioUrl);
+      final localPath = widget.localFilePath;
+      final isLocal = localPath != null && localPath.isNotEmpty;
+      await _audioService.playSource(
+        isLocal ? localPath : widget.audioUrl,
+        isLocal: isLocal,
+      );
       // Small delay to let the player initialize, then seek
       await Future.delayed(const Duration(milliseconds: 100));
       await _audioService.seek(seekPosition);
@@ -212,10 +222,15 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
       _position = seekPosition;
     });
 
-    if (_audioService.isPlayingUrl(widget.audioUrl)) {
+    if (_isThisAudioPlaying) {
       await _audioService.seek(seekPosition);
     } else {
-      await _audioService.play(widget.audioUrl);
+      final localPath = widget.localFilePath;
+      final isLocal = localPath != null && localPath.isNotEmpty;
+      await _audioService.playSource(
+        isLocal ? localPath : widget.audioUrl,
+        isLocal: isLocal,
+      );
       await Future.delayed(const Duration(milliseconds: 100));
       await _audioService.seek(seekPosition);
     }
@@ -355,6 +370,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble>
                           StatusIcon(
                             status: widget.status,
                             syncStatus: widget.syncStatus,
+                            onRetry: widget.onRetry,
                           ),
                         ],
                       ],

@@ -12,6 +12,7 @@ import 'package:social/providers/chat_message_provider.dart';
 import 'package:social/providers/chat_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/notification_service.dart';
+import 'package:social/services/sound_service.dart';
 
 import 'package:social/widgets/chat_app_bar.dart';
 import 'package:social/widgets/chat_input_bar.dart';
@@ -493,12 +494,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     // 3. Map to Widgets
     return actions.map((action) {
+      final isDark = Brightness.dark == Theme.of(context).brightness;
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 6),
         child: IconButton(
           icon: Icon(
             action['icon'] as IconData,
-            color: Theme.of(context).colorScheme.secondary,
+            color: isDark ? Colors.white : Colors.black,
           ),
           onPressed: action['onTap'] as VoidCallback,
         ),
@@ -512,35 +514,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final currentUserId = authService.currentUser!.uid;
     final chatRoomId = _getChatRoomId(currentUserId, widget.receiverId);
 
-    ref.listen<AsyncValue<List<hive_model.Message>>>(
-      chatMessagesProvider(chatRoomId),
-      (previous, next) {
-        next.whenData((messages) {
-          if (!mounted) return;
+    ref.listen<
+      AsyncValue<List<hive_model.Message>>
+    >(chatMessagesProvider(chatRoomId), (previous, next) {
+      next.whenData((messages) {
+        if (!mounted) return;
 
-          // Mark messages as read
-          Future.delayed(Duration.zero, () {
-            ref
-                .read(chatServiceProvider)
-                .messageRead(currentUserId, widget.receiverId);
-          });
-
-          //  Only scroll if New Messages > Old Messages
-          final oldLen = previous?.asData?.value.length ?? 0;
-          final newLen = messages.length;
-
-          // Also scroll if we are nearly at bottom
-          // or if it's the first load (oldLen == 0)
-          if (newLen > oldLen || oldLen == 0) {
-            Future.delayed(const Duration(milliseconds: 100), () {
-              if (_scrollController.hasClients) {
-                _scrollDown();
-              }
-            });
-          }
+        // Mark messages as read
+        Future.delayed(Duration.zero, () {
+          ref
+              .read(chatServiceProvider)
+              .messageRead(currentUserId, widget.receiverId);
         });
-      },
-    );
+
+        //  Only scroll if New Messages > Old Messages
+        final oldLen = previous?.asData?.value.length ?? 0;
+        final newLen = messages.length;
+
+        // Play receive sound if new message is from other user (not initial load)
+        if (newLen > oldLen && oldLen > 0 && messages.isNotEmpty) {
+          final latestMessage = messages.last;
+          if (latestMessage.senderID != currentUserId) {
+            SoundService().playReceive();
+          }
+        }
+
+        // Also scroll if we are nearly at bottom
+        // or if it's the first load (oldLen == 0)
+        if (newLen > oldLen || oldLen == 0) {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (_scrollController.hasClients) {
+              _scrollDown();
+            }
+          });
+        }
+      });
+    });
     // ============================================================
 
     final chatRoomAsync = ref.watch(chatStreamProvider(widget.receiverId));
@@ -609,8 +618,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ? Brightness.light
           : Brightness.dark;
     } else if (isImageUrl && wallpaperUrl != null) {
-      sysNavBarColor = Colors.transparent;
-      sysNavBarIconBrightness = Brightness.light;
+      sysNavBarColor = Theme.of(context).colorScheme.surface;
     }
 
     // Build Actions
@@ -757,15 +765,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             borderRadius: 30,
                             child: Container(
                               padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.primary,
-                                shape: BoxShape.circle,
-                              ),
+                              decoration: BoxDecoration(shape: BoxShape.circle),
                               child: Icon(
                                 Icons.keyboard_arrow_down_rounded,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onPrimaryContainer,
+                                color: Theme.of(context).colorScheme.primary,
                               ),
                             ),
                           ),

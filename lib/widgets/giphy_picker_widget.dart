@@ -88,6 +88,7 @@ class _GiphyPickerWidgetState extends State<GiphyPickerWidget> {
           _gifs = newGifs;
           _isLoading = false;
         });
+        debugPrint('📷 GIFs loaded: ${newGifs.length} items');
       }
     } catch (e) {
       if (mounted) {
@@ -95,7 +96,7 @@ class _GiphyPickerWidgetState extends State<GiphyPickerWidget> {
           _isLoading = false;
         });
       }
-      debugPrint('Error loading GIFs: $e');
+      debugPrint('❌ Error loading GIFs: $e');
     }
   }
 
@@ -160,16 +161,17 @@ class _GiphyPickerWidgetState extends State<GiphyPickerWidget> {
                       onTap: () => widget.onGifSelected(url),
                       onLongPress: () => widget.onGifLongPress?.call(url),
                       child: Container(
-                        color: Colors.grey[200],
+                        color: Colors.grey[300],
                         child: CachedNetworkImage(
                           imageUrl: url,
                           fit: BoxFit.cover,
-                          memCacheWidth: 200,
-                          placeholder: (context, url) =>
-                              Container(color: Colors.grey[300]),
-                          errorWidget: (context, url, error) =>
-                              const Icon(Icons.error, color: Colors.red),
-                          fadeInDuration: const Duration(milliseconds: 200),
+                          placeholder: (context, url) => const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          errorWidget: (context, url, error) {
+                            debugPrint('GIF load error: $error');
+                            return const Icon(Icons.error, color: Colors.red);
+                          },
                         ),
                       ),
                     );

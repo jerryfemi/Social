@@ -590,14 +590,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
                   borderRadius: 30,
                   child: Container(
                     padding: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.secondary.withValues(alpha: 0.2),
-                      ),
-                    ),
+                    decoration: BoxDecoration(shape: BoxShape.circle),
                     child: AnimatedRotation(
                       turns: _showAttachments ? 0.125 : 0,
                       duration: const Duration(milliseconds: 200),
@@ -658,7 +651,10 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
                       }
                     });
                   },
-                  icon: Icon(Icons.emoji_emotions_outlined),
+                  icon: Icon(
+                    Icons.emoji_emotions_outlined,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 16,

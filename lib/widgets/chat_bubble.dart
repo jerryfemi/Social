@@ -33,6 +33,7 @@ class ChatBubble extends ConsumerStatefulWidget {
     required this.onLongPress,
     this.isFirstInSequence = true,
     this.isLastInSequence = true,
+    this.onRetry,
   });
 
   final Alignment alignment;
@@ -50,6 +51,7 @@ class ChatBubble extends ConsumerStatefulWidget {
   final bool isSelected;
   final VoidCallback? onTap; // For selection toggle
   final VoidCallback? onLongPress; // For entering selection mode
+  final VoidCallback? onRetry; // For retrying failed messages
 
   // Grouping flags
   final bool isFirstInSequence;
@@ -283,6 +285,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                                           status:
                                               widget.data['status'] ?? 'read',
                                           syncStatus: widget.data['syncStatus'],
+                                          onRetry: widget.onRetry,
                                         )
                                       : isMedia
                                       ? _buildMediaContent(
@@ -654,6 +657,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                         StatusIcon(
                           status: widget.data['status'] ?? 'read',
                           syncStatus: widget.data['syncStatus'],
+                          onRetry: widget.onRetry,
                         ),
                       ],
                     ],
@@ -703,6 +707,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                         StatusIcon(
                           status: widget.data['status'] ?? 'read',
                           syncStatus: widget.data['syncStatus'],
+                          onRetry: widget.onRetry,
                         ),
                       ],
                     ],
@@ -807,6 +812,7 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                       StatusIcon(
                         status: widget.data['status'] ?? 'read',
                         syncStatus: widget.data['syncStatus'],
+                        onRetry: widget.onRetry,
                       ),
                     ],
                   ],
@@ -853,7 +859,13 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
 class StatusIcon extends StatelessWidget {
   final String status;
   final String? syncStatus;
-  const StatusIcon({super.key, required this.status, required this.syncStatus});
+  final VoidCallback? onRetry;
+  const StatusIcon({
+    super.key,
+    required this.status,
+    required this.syncStatus,
+    this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -862,7 +874,19 @@ class StatusIcon extends StatelessWidget {
 
     if (syncStatus != null) {
       if (syncStatus!.contains('failed')) {
-        return const Icon(Icons.error_outline, size: 16, color: Colors.red);
+        return GestureDetector(
+          onTap: onRetry,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 14, color: Colors.red),
+              if (onRetry != null) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.refresh, size: 14, color: Colors.red),
+              ],
+            ],
+          ),
+        );
       }
     }
 

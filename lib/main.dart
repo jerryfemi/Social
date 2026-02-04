@@ -11,6 +11,7 @@ import 'package:social/models/message_hive.dart';
 import 'package:social/providers/theme_provider.dart';
 import 'package:social/services/hive_service.dart';
 import 'package:social/services/notification_service.dart';
+import 'package:social/services/sound_service.dart';
 import 'package:social/theme/dark_theme.dart';
 import 'package:social/theme/light_theme.dart';
 import 'package:social/utils/router.dart';
@@ -27,6 +28,9 @@ void main() async {
 
   await HiveService().init();
   await Hive.openBox('settings');
+
+  // Initialize sound service for in-app sounds
+  SoundService().init();
 
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true,

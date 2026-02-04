@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:social/models/message_hive.dart';
 import 'package:social/services/auth_service.dart';
+import 'package:social/services/sound_service.dart';
 import 'package:social/services/storage_service.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -187,6 +188,9 @@ class ChatService extends ChangeNotifier {
       'lastMessageStatus': 'sent',
       'lastSenderId': currentUserID,
     }, SetOptions(merge: true));
+
+    // Play send sound on successful upload
+    SoundService().playSend();
   }
 
   // get message
@@ -589,10 +593,12 @@ class ChatService extends ChangeNotifier {
       'lastSenderId': currentUserID,
     }, SetOptions(merge: true));
 
-    // Delete local file after upload
-    if (await voiceFile.exists()) {
-      await voiceFile.delete();
-    }
+    // NOTE: We intentionally keep the local voice file for instant playback.
+    // The file will be cleaned up when the cache manager handles it or
+    // when the user logs in on another device (they'll download from URL).
+
+    // Play send sound on successful upload
+    SoundService().playSend();
   }
 
   // send image message
@@ -713,6 +719,9 @@ class ChatService extends ChangeNotifier {
       'lastMessageStatus': MessageStatus.sent,
       'lastSenderId': currentuserID,
     }, SetOptions(merge: true));
+
+    // Play send sound on successful upload
+    SoundService().playSend();
   }
 
   // Set Chat Wallpaper
@@ -830,10 +839,9 @@ class ChatService extends ChangeNotifier {
 
     await _firestore.collection('Chat_rooms').doc(chatRoomId).update({
       'pinnedMessage': {
-        'id': message
-            .localId, // or firestore ID if available, but localId is safer for hive sync
+        'id': message.localId,
         'message': displayContent,
-        'originalMessage': message.message, // store original url/text
+        'originalMessage': message.message,
         'type': message.type,
         'senderId': message.senderID,
         'timestamp': message.timestamp,
@@ -1036,6 +1044,31 @@ class ChatService extends ChangeNotifier {
         'isOnline': data?['isOnline'] ?? false,
         'lastSeen': data?['lastSeen'],
       };
+    });
+  }
+
+  // create Group chat
+  Future<void> createGroup(
+    String groupName,
+    List<String> selectedUserIds,
+  ) async {
+    final currentUserId = _auth.currentUser!.uid;
+
+    // list of members
+    List<String> members = [currentUserId, ...selectedUserIds];
+
+    // get chatroom doc(firestore Id)
+    final newDocRef = _firestore.collection('Chat_rooms').doc();
+
+    await newDocRef.set({
+      'chatRoomId': newDocRef.id,
+      'type': 'group',
+      'groupName': groupName,
+      'participants': members,
+      'adminId': currentUserId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastMessage': '',
+      'lastMessageTimestamp': FieldValue.serverTimestamp(),
     });
   }
 }

@@ -11,6 +11,8 @@ import 'package:social/providers/chat_provider.dart';
 import 'package:social/providers/hive_service_provider.dart';
 import 'package:social/services/chat_service.dart';
 import 'package:social/services/hive_service.dart';
+import 'package:social/services/sound_service.dart';
+import 'package:social/services/sync_service.dart';
 import 'package:uuid/uuid.dart';
 
 final chatMessagesProvider =
@@ -561,6 +563,17 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
       }
     } catch (e) {
       debugPrint('❌ Error editing message: $e');
+    }
+  }
+
+  /// Retry a failed message
+  Future<bool> retryMessage(String localId) async {
+    try {
+      final syncService = SyncService();
+      return await syncService.retryMessageById(chatRoomId, localId);
+    } catch (e) {
+      debugPrint('❌ Error retrying message: $e');
+      return false;
     }
   }
 

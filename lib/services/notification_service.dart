@@ -12,6 +12,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:social/firebase_options.dart';
 import 'package:social/models/message_hive.dart';
 import 'package:social/services/hive_service.dart';
+import 'package:social/services/sound_service.dart';
 import 'package:social/utils/router.dart';
 
 // ============ 1. BACKGROUND HANDLER (MUST BE TOP-LEVEL) ============
@@ -183,31 +184,45 @@ class NotificationService {
     final String? senderId = message.data['senderID'];
     final String? receiverId = message.data['receiverID'];
 
-    // Don't show if we are currently looking at this chat
-    if (senderId == _currentChatUserId) return;
-
-    // Don't show if this notification is not for us
+    // Don't show/play if this notification is not for us
     if (receiverId != _auth.currentUser?.uid) return;
 
-    if (notification != null && android != null) {
-      _localNotifications.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channel.id,
-            _channel.name,
-            channelDescription: _channel.description,
-            icon: '@mipmap/ic_launcher',
-            importance: Importance.max,
-            priority: Priority.high,
-          ),
-          iOS: const DarwinNotificationDetails(),
-        ),
-        payload: jsonEncode(message.data),
-      );
+    // If we're in the chat with this sender, skip - chat provider handles the sound
+    if (senderId == _currentChatUserId) {
+      return;
     }
+
+    // Otherwise play notification sound and show notification
+    SoundService().playNotification();
+
+    // Show notification - use data payload as fallback if notification payload missing
+    final title =
+        notification?.title ?? message.data['senderName'] ?? 'New Message';
+    final body =
+        notification?.body ??
+        message.data['message'] ??
+        'You have a new message';
+
+    _localNotifications.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channel.id,
+          _channel.name,
+          channelDescription: _channel.description,
+          icon: '@mipmap/ic_launcher',
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: false, // Disable system sound, we play our own
+        ),
+        iOS: DarwinNotificationDetails(
+          presentSound: false, // Disable iOS system sound too
+        ),
+      ),
+      payload: jsonEncode(message.data),
+    );
   }
 
   void _handleMessageTap(RemoteMessage message) {

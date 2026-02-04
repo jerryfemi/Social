@@ -35,9 +35,8 @@ class _ViewImageScreenState extends State<ViewImageScreen>
     super.initState();
     if (widget.timestamp != null) {
       if (widget.isProfile) {
-        // Profile photos might not need a timestamp, or use a specific one
       } else {
-        // Use formatMessageTime for clean "10:30 PM" or "Yesterday"
+        // format time
         _timeString = DateUtil().formatMessageTime(widget.timestamp);
       }
     }
@@ -65,7 +64,7 @@ class _ViewImageScreenState extends State<ViewImageScreen>
               child: Hero(
                 tag: widget.isProfile ? 'pfp' : widget.imageUrl,
                 child: InteractiveViewer(
-                  minScale: 0.5,
+                  minScale: 1,
                   maxScale: 4.0,
                   child: widget.imageUrl.startsWith('http')
                       ? CachedNetworkImage(

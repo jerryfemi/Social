@@ -298,6 +298,11 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
           widget.onToggleSelection(message.localId);
         }
       },
+      onRetry: () {
+        ref
+            .read(chatMessagesProvider(widget.chatRoomId).notifier)
+            .retryMessage(message.localId);
+      },
     );
   }
 

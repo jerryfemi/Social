@@ -292,15 +292,7 @@ class VoiceRecorderButtonState extends State<VoiceRecorderButton>
       borderRadius: 30,
       child: Container(
         padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          // color: Theme.of(context).colorScheme.primary,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: Theme.of(
-              context,
-            ).colorScheme.inverseSurface.withValues(alpha: 0.2),
-          ),
-        ),
+        decoration: BoxDecoration(shape: BoxShape.circle),
         child: Icon(
           Icons.mic,
           color: Theme.of(context).colorScheme.primary,

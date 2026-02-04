@@ -44,131 +44,148 @@ class _AttachmentPickerSheetState extends State<AttachmentPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 400, // Increased height for search bar
-      color: Theme.of(context).colorScheme.surface,
-      child: Column(
-        children: [
-          // Search Bar & Tabs Row
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                // Search Toggle / Bar
-                Expanded(
-                  child: _isSearchVisible
-                      ? TextField(
-                          controller: _searchController,
-                          autofocus: true,
-                          decoration: InputDecoration(
-                            hintText: _selectedIndex == 0
-                                ? 'Search emojis...'
-                                : 'Search GIFs...',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(20),
-                              borderSide: BorderSide.none,
+    final isKeyboard = MediaQuery.of(context).viewInsets.bottom > 0;
+    // When keyboard is open, show compact picker (about 1 row of emojis)
+    final double pickerHeight = isKeyboard ? 100 : 355;
+    // Account for the search bar/tabs row (~61px with padding)
+    final double emojiHeight = isKeyboard ? 40 : 266;
+    
+    return SizedBox(
+      height: pickerHeight,
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: Column(
+          children: [
+            // Search Bar & Tabs Row
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: _isSearchVisible
+                  ? TextField(
+                      controller: _searchController,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: _selectedIndex == 0
+                            ? 'Search emojis...'
+                            : 'Search GIFs...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(20),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        suffixIcon: IconButton(
+                          icon: Icon(Icons.close),
+                          onPressed: () {
+                            setState(() {
+                              _isSearchVisible = false;
+                              _searchController.clear();
+                            });
+                          },
+                        ),
+                      ),
+                    )
+                  : Container(
+                      height: 45,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        border: BoxBorder.all(
+                          color: Theme.of(context).colorScheme.secondary,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Search Button
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _isSearchVisible = true;
+                              });
+                            },
+                            icon: Icon(
+                              Icons.search,
+                              color: Theme.of(context).colorScheme.onSurface,
                             ),
-                            filled: true,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
+                          ),
+
+                          // Tabs
+                          Container(
+                            decoration: BoxDecoration(
+                              color: _selectedIndex == 0
+                                  ? Theme.of(context).colorScheme.primary
+                                        .withValues(alpha: 0.15)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                            suffixIcon: IconButton(
-                              icon: Icon(Icons.close),
+                            child: IconButton(
                               onPressed: () {
                                 setState(() {
-                                  _isSearchVisible = false;
-                                  _searchController.clear();
+                                  _selectedIndex = 0;
                                 });
                               },
+                              icon: Icon(
+                                Icons.emoji_emotions_outlined,
+                                color: _selectedIndex == 0
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.onSurface,
+                              ),
                             ),
                           ),
-                        )
-                      : Container(
-                          height: 45,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.secondary,
-                            borderRadius: BorderRadius.circular(12),
+                          SizedBox(width: 5),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: _selectedIndex == 1
+                                  ? Theme.of(context).colorScheme.primary
+                                        .withValues(alpha: 0.15)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedIndex = 1;
+                                });
+                              },
+                              icon: Icon(
+                                Icons.gif_outlined,
+                                color: _selectedIndex == 1
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
                           ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              // Search Button
-                              IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _isSearchVisible = true;
-                                  });
-                                },
-                                icon: Icon(
-                                  Icons.search,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface,
-                                ),
-                              ),
-                              SizedBox(width: 20),
-
-                              // Tabs
-                              IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedIndex = 0;
-                                  });
-                                },
-                                icon: Icon(
-                                  Icons.emoji_emotions_outlined,
-                                  color: _selectedIndex == 0
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.onSurface,
-                                ),
-                              ),
-                              SizedBox(width: 10),
-                              IconButton(
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedIndex = 1;
-                                  });
-                                },
-                                icon: Icon(
-                                  Icons.gif_outlined,
-                                  color: _selectedIndex == 1
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(context).colorScheme.onSurface,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                ),
-              ],
+                        ],
+                      ),
+                    ),
             ),
-          ),
 
-          Expanded(
-            child: IndexedStack(
-              index: _selectedIndex,
-              children: [
-                // index 0: Emoji
-                // Note: External search for EmojiPicker is not fully integrated
-                // as the package handles its own search view internally.
-                // We could hide this and use our own but for now let's keep it simple.
-                // The search bar in parent is mostly for GIFs.
-                EmojiPickerWidget(
-                  controller: widget.mesageController,
-                  searchController: _searchController,
-                ),
+            Expanded(
+              child: IndexedStack(
+                index: _selectedIndex,
+                children: [
+                  EmojiPickerWidget(
+                    controller: widget.mesageController,
+                    searchController: _searchController,
+                    height: emojiHeight,
+                  ),
 
-                // index 1: GIF
-                GiphyPickerWidget(
-                  onGifSelected: (url) => widget.onSendGif(url, null),
-                  onGifLongPress: _onGifLongPress,
-                  searchController: _searchController,
-                ),
-              ],
+                  // index 1: GIF
+                  GiphyPickerWidget(
+                    onGifSelected: (url) => widget.onSendGif(url, null),
+                    onGifLongPress: _onGifLongPress,
+                    searchController: _searchController,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

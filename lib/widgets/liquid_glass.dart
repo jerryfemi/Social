@@ -63,14 +63,7 @@ class LiquidGlass extends StatelessWidget {
                   baseColor.withValues(alpha: isDark ? 0.05 : 0.1),
                 ],
               ),
-              // Optional: Add shadow back if desired
-              // boxShadow: [
-              //   BoxShadow(
-              //     color: Colors.black.withValues(alpha: 0.1),
-              //     blurRadius: 20,
-              //     offset: const Offset(0, 4),
-              //   ),
-              // ],
+              
             ),
             child: child,
           ),
