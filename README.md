@@ -1,8 +1,8 @@
-# Liquid Chat 💬
+# Social Chat App 💬
 
 A production-grade Flutter chat application built with a **local-first architecture**. This project combines a custom "Liquid Glass" UI aesthetic with a robust backend infrastructure using Firebase and Hive for offline capabilities.
 
-Screen Recording: https://drive.google.com/drive/folders/1FUzFNTzfIxn1GMWzGZBtV9otFmIRRT8R
+Preview(Scren recording + apk file): https://drive.google.com/drive/folders/1FUzFNTzfIxn1GMWzGZBtV9otFmIRRT8R
 
 ## 📱 Screenshots
 
