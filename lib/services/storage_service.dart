@@ -3,18 +3,18 @@ import 'dart:typed_data';
 import 'package:firebase_storage/firebase_storage.dart';
 
 class StorageService {
-
-    // DELETE CHAT WALLPAPER FILE
-    Future<void> deleteChatWallpaperFile(String? wallpaperUrl) async {
-      if (wallpaperUrl == null || wallpaperUrl.isEmpty) return;
-      try {
-        final ref = _storage.refFromURL(wallpaperUrl);
-        await ref.delete();
-        print('Deleted chat wallpaper from storage.');
-      } catch (e) {
-        print('Error deleting chat wallpaper: $e');
-      }
+  // DELETE CHAT WALLPAPER FILE
+  Future<void> deleteChatWallpaperFile(String? wallpaperUrl) async {
+    if (wallpaperUrl == null || wallpaperUrl.isEmpty) return;
+    try {
+      final ref = _storage.refFromURL(wallpaperUrl);
+      await ref.delete();
+      print('Deleted chat wallpaper from storage.');
+    } catch (e) {
+      print('Error deleting chat wallpaper: $e');
     }
+  }
+
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   //  UPLOAD PROFILE PHOTO
@@ -112,6 +112,28 @@ class StorageService {
       return await snapshot.ref.getDownloadURL();
     } catch (e) {
       throw 'Failed to upload chat media: $e';
+    }
+  }
+
+  // UPLOAD GROUP PHOTO
+  Future<String> uploadGroupPhoto(String fileName, Uint8List fileBytes) async {
+    try {
+      // Reference: group_images/filename
+      final ref = _storage.ref().child('group_images/$fileName');
+
+      // Determine content type
+      String contentType = 'image/jpeg';
+      if (fileName.endsWith('.png')) contentType = 'image/png';
+
+      UploadTask uploadTask = ref.putData(
+        fileBytes,
+        SettableMetadata(contentType: contentType),
+      );
+
+      TaskSnapshot snapshot = await uploadTask;
+      return await snapshot.ref.getDownloadURL();
+    } catch (e) {
+      throw 'Failed to upload group photo: $e';
     }
   }
 }

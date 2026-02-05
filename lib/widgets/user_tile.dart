@@ -7,19 +7,24 @@ class UserTile extends StatelessWidget {
   final Widget? subtitle;
   final Widget? trailing;
   final void Function()? onTap;
+  final void Function()? onLongPress;
+  final bool isGroup;
   const UserTile({
     super.key,
     required this.onTap,
+    this.onLongPress,
     required this.text,
     this.photourl,
     this.subtitle,
     this.trailing,
+    this.isGroup = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         margin: EdgeInsets.only(top: 3),
         padding: EdgeInsets.all(8),
@@ -37,7 +42,7 @@ class UserTile extends StatelessWidget {
                       placeholder: (context, url) =>
                           const CircularProgressIndicator(),
                       errorWidget: (context, url, error) => Icon(
-                        Icons.person,
+                        isGroup ? Icons.group : Icons.person,
                         size: 30,
                         color: Theme.of(context).colorScheme.tertiary,
                       ),
@@ -46,7 +51,7 @@ class UserTile extends StatelessWidget {
                       backgroundColor: Theme.of(context).colorScheme.secondary,
                       radius: 33,
                       child: Icon(
-                        Icons.person,
+                        isGroup ? Icons.group : Icons.person,
                         size: 30,
                         color: Theme.of(context).colorScheme.tertiary,
                       ),

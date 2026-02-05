@@ -37,7 +37,7 @@ class SearchBarDelegate extends SliverPersistentHeaderDelegate {
           child: CupertinoSearchTextField(
             onChanged: onChanged,
             controller: controller,
-            placeholder: 'Search users...',
+            placeholder: 'Search...',
             placeholderStyle: TextStyle(
               color: Theme.of(
                 context,

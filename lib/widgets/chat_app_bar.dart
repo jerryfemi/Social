@@ -13,6 +13,7 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
   final bool isSelectionMode;
   final int selectedCount;
   final List<Widget> actions;
+  final bool isGroup;
 
   const ChatAppBar({
     super.key,
@@ -24,6 +25,7 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
     required this.isSelectionMode,
     required this.selectedCount,
     required this.actions,
+    this.isGroup = false,
   });
 
   @override
@@ -50,7 +52,7 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       placeholder: (context, url) =>
                           const CircularProgressIndicator(),
                       errorWidget: (context, url, error) => Icon(
-                        Icons.person,
+                        isGroup ? Icons.group : Icons.person,
                         size: 20,
                         color: Theme.of(context).colorScheme.tertiary,
                       ),
@@ -59,7 +61,7 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       backgroundColor: Theme.of(context).colorScheme.surface,
                       radius: 22,
                       child: Icon(
-                        Icons.person,
+                        isGroup ? Icons.group : Icons.person,
                         size: 20,
                         color: Theme.of(context).colorScheme.tertiary,
                       ),
@@ -78,86 +80,99 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                       fontSize: 18,
                     ),
                   ),
-                  // Typing indicator or Online status
-                  Consumer(
-                    builder: (context, ref, child) {
-                      final typingAsync = ref.watch(
-                        typingStatusProvider(receiverId),
-                      );
-                      final onlineAsync = ref.watch(
-                        onlineStatusProvider(receiverId),
-                      );
-                      final recordingAsync = ref.watch(
-                        recordingStatusProvider(receiverId),
-                      );
-                      final isRecording = recordingAsync.value ?? false;
-                      final isTyping = typingAsync.value ?? false;
-                      final onlineData = onlineAsync.value;
-                      final isOnline = onlineData?['isOnline'] ?? false;
-
-                      // Priority: typing > online > last seen
-                      if (isTyping) {
-                        return Text(
-                          'typing...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.primary,
-                            fontStyle: FontStyle.italic,
-                          ),
+                  // For groups, show member count or nothing
+                  // For 1-on-1, show typing/online status
+                  if (isGroup)
+                    Text(
+                      'Group Chat',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                    )
+                  else
+                    // Typing indicator or Online status
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final typingAsync = ref.watch(
+                          typingStatusProvider(receiverId),
                         );
-                      }
-                      if (isRecording) {
-                        return Text(
-                          'recording...',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.primary,
-                            fontStyle: FontStyle.italic,
-                          ),
+                        final onlineAsync = ref.watch(
+                          onlineStatusProvider(receiverId),
                         );
-                      }
+                        final recordingAsync = ref.watch(
+                          recordingStatusProvider(receiverId),
+                        );
+                        final isRecording = recordingAsync.value ?? false;
+                        final isTyping = typingAsync.value ?? false;
+                        final onlineData = onlineAsync.value;
+                        final isOnline = onlineData?['isOnline'] ?? false;
 
-                      if (isOnline) {
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: const BoxDecoration(
-                                color: Colors.green,
-                                shape: BoxShape.circle,
-                              ),
+                        // Priority: typing > online > last seen
+                        if (isTyping) {
+                          return Text(
+                            'typing...',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.primary,
+                              fontStyle: FontStyle.italic,
                             ),
-                            const SizedBox(width: 4),
-                            const Text(
-                              'Active now',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.green,
-                              ),
+                          );
+                        }
+                        if (isRecording) {
+                          return Text(
+                            'recording...',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.primary,
+                              fontStyle: FontStyle.italic,
                             ),
-                          ],
-                        );
-                      }
+                          );
+                        }
 
-                      // Show last seen if not online
-                      final lastSeen = onlineData?['lastSeen'];
-                      if (lastSeen != null) {
-                        return Text(
-                          dateUtil.formatLastSeen(lastSeen),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                        );
-                      }
+                        if (isOnline) {
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: const BoxDecoration(
+                                  color: Colors.green,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Text(
+                                'Active now',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green,
+                                ),
+                              ),
+                            ],
+                          );
+                        }
 
-                      return const SizedBox.shrink();
-                    },
-                  ),
+                        // Show last seen if not online
+                        final lastSeen = onlineData?['lastSeen'];
+                        if (lastSeen != null) {
+                          return Text(
+                            dateUtil.formatLastSeen(lastSeen),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withValues(alpha: 0.6),
+                            ),
+                          );
+                        }
+
+                        return const SizedBox.shrink();
+                      },
+                    ),
                 ],
               ),
             if (isSelectionMode)

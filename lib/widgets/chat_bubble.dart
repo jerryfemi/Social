@@ -34,6 +34,7 @@ class ChatBubble extends ConsumerStatefulWidget {
     this.isFirstInSequence = true,
     this.isLastInSequence = true,
     this.onRetry,
+    this.showSenderName = false,
   });
 
   final Alignment alignment;
@@ -52,6 +53,7 @@ class ChatBubble extends ConsumerStatefulWidget {
   final VoidCallback? onTap; // For selection toggle
   final VoidCallback? onLongPress; // For entering selection mode
   final VoidCallback? onRetry; // For retrying failed messages
+  final bool showSenderName; // For group chats - show name above bubble
 
   // Grouping flags
   final bool isFirstInSequence;
@@ -240,6 +242,21 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
                           ? CrossAxisAlignment.end
                           : CrossAxisAlignment.start,
                       children: [
+                        // Sender name (for group chats, only show for others, and only first in sequence)
+                        if (widget.showSenderName &&
+                            !widget.isSender &&
+                            widget.isFirstInSequence)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 12, bottom: 2),
+                            child: Text(
+                              widget.senderName,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ),
                         // Bubble
                         ConstrainedBox(
                           constraints: BoxConstraints(maxWidth: 250),

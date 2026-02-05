@@ -23,6 +23,7 @@ class ChatInputBar extends ConsumerStatefulWidget {
   final VoidCallback onMessageSent;
   final FocusNode? focusNode;
   final Color? inputBackgroundColor;
+  final bool isGroup;
 
   const ChatInputBar({
     super.key,
@@ -33,6 +34,7 @@ class ChatInputBar extends ConsumerStatefulWidget {
     required this.onMessageSent,
     this.focusNode,
     this.inputBackgroundColor,
+    this.isGroup = false,
   });
 
   @override
@@ -180,8 +182,12 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
   }
 
   // Helper method to get chat room ID
-  String _getChatRoomId(String userId1, String userId2) {
-    final ids = [userId1, userId2]..sort();
+  String _getChatRoomId(String currentUserId, String otherId) {
+    // For groups, otherid IS the groupId
+    if (widget.isGroup) {
+      return otherId;
+    }
+    final ids = [currentUserId, otherId]..sort();
     return ids.join('_');
   }
 
@@ -227,6 +233,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
           replyToMessage: rMessage,
           replyToSender: rSender,
           replyToType: rType ?? 'text',
+          isGroup: widget.isGroup,
         );
 
         _clearImage();
@@ -240,6 +247,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
           replyToMessage: rMessage,
           replyToSender: rSender,
           replyToType: rType ?? 'text',
+          isGroup: widget.isGroup,
         );
       }
 
@@ -284,6 +292,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
         replyToMessage: rMessage,
         replyToSender: rSender,
         replyToType: rType ?? 'text',
+        isGroup: widget.isGroup,
       );
       _setRecording(false);
       widget.onCancelReply();
@@ -323,6 +332,7 @@ class _ChatInputBarState extends ConsumerState<ChatInputBar> {
       replyToMessage: rMessage,
       replyToSender: rSender,
       replyToType: rType ?? 'text',
+      isGroup: widget.isGroup,
     );
 
     widget.onCancelReply();

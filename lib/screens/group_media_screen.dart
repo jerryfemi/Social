@@ -2,42 +2,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // Add this import
 
-class ChatMediaScreen extends StatelessWidget {
-  final String receiverId;
+class GroupMediaScreen extends StatelessWidget {
+  final String groupId;
 
-  const ChatMediaScreen({super.key, required this.receiverId});
-
-  // Helper to get chat room ID
-  String _getChatRoomId(String userId1, String userId2) {
-    final ids = [userId1, userId2]..sort();
-    return ids.join('_');
-  }
+  const GroupMediaScreen({super.key, required this.groupId});
 
   @override
   Widget build(BuildContext context) {
-    // Get current user ID from Firebase Auth
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-
-    // Handle case where user is not logged in
-    if (currentUserId == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Media')),
-        body: const Center(child: Text('User not logged in')),
-      );
-    }
-
-    final chatRoomId = _getChatRoomId(currentUserId, receiverId);
-
     return Scaffold(
       appBar: AppBar(title: const Text('Media')),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
             .collection('Chat_rooms')
-            .doc(chatRoomId)
+            .doc(groupId)
             .collection('Messages')
-            .where('type', whereIn: ['image', 'video'])
             .orderBy('timestamp', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
@@ -46,8 +25,6 @@ class ChatMediaScreen extends StatelessWidget {
           }
 
           if (snapshot.hasError) {
-            debugPrint('ERROR in StreamBuilder: ${snapshot.error}');
-
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
@@ -55,7 +32,15 @@ class ChatMediaScreen extends StatelessWidget {
             return const Center(child: Text('No media found'));
           }
 
-          final mediaDocs = snapshot.data!.docs;
+          final mediaDocs = snapshot.data!.docs.where((doc) {
+            final type =
+                (doc.data() as Map<String, dynamic>)['type'] as String?;
+            return type == 'image' || type == 'video';
+          }).toList();
+
+          if (mediaDocs.isEmpty) {
+            return const Center(child: Text('No media found'));
+          }
 
           return GridView.builder(
             padding: const EdgeInsets.all(8),
@@ -80,6 +65,7 @@ class ChatMediaScreen extends StatelessWidget {
                       extra: {
                         'videoUrl': data['message'],
                         'caption': data['caption'],
+                        'thumbnailUrl': data['thumbnailUrl'],
                       },
                     );
                   } else {

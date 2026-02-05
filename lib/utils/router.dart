@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social/providers/auth_provider.dart';
+import 'package:social/screens/create_group_screen.dart';
 import 'package:social/screens/edit_video_screen.dart';
 import 'package:social/screens/blocked_user_screen.dart';
 import 'package:social/screens/chat_media_screen.dart';
 import 'package:social/screens/chat_profile_screen.dart';
 import 'package:social/screens/chat_screen.dart';
+import 'package:social/screens/group_info_screen.dart';
+import 'package:social/screens/group_media_screen.dart';
 import 'package:social/screens/home_screen.dart';
 import 'package:social/screens/login_screen.dart';
 import 'package:social/screens/profile_screen.dart';
@@ -55,6 +58,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const BlockedUserScreen(),
       ),
 
+      // CREATE GROUP SCREEN
+      GoRoute(
+        path: '/create-group',
+        builder: (context, state) {
+          final selectedUsers =
+              state.extra as List<Map<String, dynamic>>? ?? [];
+          return CreateGroupScreen(selectedUsers: selectedUsers);
+        },
+      ),
+
       //REGISTER UP SCREEN
       GoRoute(
         path: '/signup',
@@ -67,11 +80,27 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final receiverName = state.pathParameters['receiverName']!;
           final receiverId = state.pathParameters['receiverID']!;
-          final image = state.extra as String?;
+
+          // Extra can be a String (photoUrl) or Map with photoUrl, scrollToMessageId, isGroup
+          String? photoUrl;
+          String? scrollToMessageId;
+          bool isGroup = false;
+
+          if (state.extra is String?) {
+            photoUrl = state.extra as String?;
+          } else if (state.extra is Map<String, dynamic>) {
+            final extraMap = state.extra as Map<String, dynamic>;
+            photoUrl = extraMap['photoUrl'] as String?;
+            scrollToMessageId = extraMap['scrollToMessageId'] as String?;
+            isGroup = extraMap['isGroup'] as bool? ?? false;
+          }
+
           return ChatScreen(
-            photoUrl: image,
+            photoUrl: photoUrl,
             receiverName: receiverName,
             receiverId: receiverId,
+            scrollToMessageId: scrollToMessageId,
+            isGroup: isGroup,
           );
         },
       ),
@@ -91,6 +120,25 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final uid = state.pathParameters['uid']!;
           return ChatMediaScreen(receiverId: uid);
+        },
+      ),
+
+      // GROUP INFO SCREEN
+      GoRoute(
+        path: '/group_info/:groupId',
+        builder: (context, state) {
+          final groupId = state.pathParameters['groupId']!;
+          final photoUrl = state.extra as String?;
+          return GroupInfoScreen(groupId: groupId, photoUrl: photoUrl);
+        },
+      ),
+
+      // GROUP MEDIA SCREEN
+      GoRoute(
+        path: '/group_media/:groupId',
+        builder: (context, state) {
+          final groupId = state.pathParameters['groupId']!;
+          return GroupMediaScreen(groupId: groupId);
         },
       ),
 

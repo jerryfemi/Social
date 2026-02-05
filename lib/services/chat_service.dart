@@ -39,7 +39,25 @@ class ChatService extends ChangeNotifier {
           for (var doc in snapshot.docs) {
             final chatRoomData = doc.data();
             final List participants = chatRoomData['participants'];
+            final String? chatType = chatRoomData['type'];
 
+            // Handle GROUP chats
+            if (chatType == 'group') {
+              recentChats.add({
+                'uid': doc.id, // Use chat room ID as uid for groups
+                'username': chatRoomData['groupName'] ?? 'Unnamed Group',
+                'profileImage': chatRoomData['groupPhotoUrl'],
+                'isGroup': true,
+                'participants': participants,
+                'lastMessage': chatRoomData['lastMessage'] ?? '',
+                'lastMessageTimestamp': chatRoomData['lastMessageTimestamp'],
+                'lastMessageStatus': chatRoomData['lastMessageStatus'],
+                'lastSenderId': chatRoomData['lastSenderId'],
+              });
+              continue;
+            }
+
+            // Handle 1-on-1 chats
             // Find the OTHER user's ID
             String otherUserId = participants.firstWhere(
               (id) => id != currentUserId,
@@ -55,11 +73,15 @@ class ChatService extends ChangeNotifier {
                 .collection('Users')
                 .doc(otherUserId)
                 .get();
+
+            if (!userDoc.exists) continue;
+
             final userData = userDoc.data() as Map<String, dynamic>;
 
             // Combine User Data with Chat Room Data (for last message info)
             recentChats.add({
               ...userData, // username, profileImage, etc.
+              'isGroup': false,
               'lastMessage': chatRoomData['lastMessage'] ?? '',
               'lastMessageTimestamp': chatRoomData['lastMessageTimestamp'],
               'lastMessageStatus': chatRoomData['lastMessageStatus'],
@@ -68,6 +90,25 @@ class ChatService extends ChangeNotifier {
           }
           return recentChats;
         });
+  }
+
+  // 1b. SEARCH/FILTER RECENT CHATS (Local filtering - instant, works offline)
+  /// Filters an already-loaded list of recent chats by username or last message.
+  /// Use this in your UI to filter the chat list as user types.
+  List<Map<String, dynamic>> filterRecentChats(
+    List<Map<String, dynamic>> recentChats,
+    String query,
+  ) {
+    if (query.isEmpty) return recentChats;
+
+    final lowerQuery = query.toLowerCase();
+
+    return recentChats.where((chat) {
+      final username = (chat['username'] ?? '').toString().toLowerCase();
+      final lastMessage = (chat['lastMessage'] ?? '').toString().toLowerCase();
+
+      return username.contains(lowerQuery) || lastMessage.contains(lowerQuery);
+    }).toList();
   }
 
   // 2. SEARCH USERS STREAM
@@ -122,6 +163,7 @@ class ChatService extends ChangeNotifier {
     String? replyToType,
     String type = 'text',
     String? caption,
+    bool isGroup = false,
   }) async {
     final String currentUserID = _auth.currentUser!.uid;
     final String currentUserEmail = _auth.currentUser!.email!;
@@ -151,17 +193,32 @@ class ChatService extends ChangeNotifier {
       replyToSender: replyToSender,
       replyToType: replyToType,
     );
-    // construct chat room ID for the two users
-    List<String> ids = [currentUserID, receiverID];
-    ids.sort();
-    String chatRoomID = ids.join('_');
+
+    // construct chat room ID - for groups, receiverID is the groupId
+    String chatRoomID;
+    if (isGroup) {
+      chatRoomID = receiverID;
+    } else {
+      List<String> ids = [currentUserID, receiverID];
+      ids.sort();
+      chatRoomID = ids.join('_');
+    }
+
+    // Prepare message data - add group tracking fields if it's a group
+    final messageData = newMessage.toFirestoreMap();
+    if (isGroup) {
+      // For groups, track who has read/delivered the message
+      // Sender automatically has "read" their own message
+      messageData['readBy'] = {currentUserID: timestamp};
+      messageData['deliveredTo'] = {currentUserID: timestamp};
+    }
 
     // add new message to database
     await _firestore
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection("Messages")
-        .add(newMessage.toFirestoreMap());
+        .add(messageData);
 
     await _firestore
         .collection('Chat_rooms')
@@ -181,13 +238,23 @@ class ChatService extends ChangeNotifier {
       lastMsg = caption ?? '🎥 Video';
     }
 
-    await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
-      'participants': [currentUserID, receiverID],
+    // Update chat room metadata
+    final chatRoomUpdate = <String, dynamic>{
       'lastMessage': lastMsg,
       'lastMessageTimestamp': timestamp,
       'lastMessageStatus': 'sent',
       'lastSenderId': currentUserID,
-    }, SetOptions(merge: true));
+    };
+
+    // Only set participants for 1-on-1 chats (groups already have participants)
+    if (!isGroup) {
+      chatRoomUpdate['participants'] = [currentUserID, receiverID];
+    }
+
+    await _firestore
+        .collection('Chat_rooms')
+        .doc(chatRoomID)
+        .set(chatRoomUpdate, SetOptions(merge: true));
 
     // Play send sound on successful upload
     SoundService().playSend();
@@ -275,6 +342,100 @@ class ChatService extends ChangeNotifier {
     }
 
     await batch.commit();
+  }
+
+  /// Mark group messages as read by the current user
+  /// This updates the `readBy` map on each unread message
+  Future<void> markGroupMessagesAsRead(String groupId) async {
+    final currentUserId = _auth.currentUser!.uid;
+    final timestamp = Timestamp.now();
+
+    try {
+      // Get all messages not read by current user
+      // We get all messages and filter locally since complex queries need indexes
+      final messagesSnapshot = await _firestore
+          .collection('Chat_rooms')
+          .doc(groupId)
+          .collection('Messages')
+          .orderBy('timestamp', descending: true)
+          .limit(50) // Only process recent messages
+          .get();
+
+      if (messagesSnapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      int updatedCount = 0;
+
+      for (final doc in messagesSnapshot.docs) {
+        final data = doc.data();
+        final senderId = data['senderID'] as String?;
+
+        // Skip messages sent by current user
+        if (senderId == currentUserId) continue;
+
+        // Check if already read by current user
+        final readBy = data['readBy'] as Map<String, dynamic>? ?? {};
+        if (readBy.containsKey(currentUserId)) continue;
+
+        // Mark as read by adding to readBy map
+        batch.update(doc.reference, {
+          'readBy.$currentUserId': timestamp,
+          'deliveredTo.$currentUserId': timestamp, // Also mark as delivered
+        });
+        updatedCount++;
+      }
+
+      if (updatedCount > 0) {
+        // Update the last message status in chat room
+        final groupDoc = await _firestore
+            .collection('Chat_rooms')
+            .doc(groupId)
+            .get();
+        if (groupDoc.exists) {
+          final data = groupDoc.data()!;
+          final lastSenderId = data['lastSenderId'] as String?;
+          // Only update lastMessageStatus if current user didn't send the last message
+          if (lastSenderId != currentUserId) {
+            batch.update(groupDoc.reference, {
+              'lastMessageStatus': MessageStatus.read,
+            });
+          }
+        }
+
+        await batch.commit();
+        debugPrint('✅ Marked $updatedCount group messages as read');
+      }
+    } catch (e) {
+      debugPrint('❌ Error marking group messages as read: $e');
+    }
+  }
+
+  /// Calculate group message status based on readBy/deliveredTo maps
+  /// Returns 'read', 'delivered', or 'sent'
+  static String calculateGroupMessageStatus(
+    Map<String, dynamic> messageData,
+    List<String> participants,
+    String senderId,
+  ) {
+    // Get other participants (exclude sender)
+    final otherParticipants = participants.where((p) => p != senderId).toList();
+    if (otherParticipants.isEmpty) return MessageStatus.sent;
+
+    final readBy = messageData['readBy'] as Map<String, dynamic>? ?? {};
+    final deliveredTo =
+        messageData['deliveredTo'] as Map<String, dynamic>? ?? {};
+
+    // Check if all other participants have read
+    final allRead = otherParticipants.every((p) => readBy.containsKey(p));
+    if (allRead) return MessageStatus.read;
+
+    // Check if all other participants have received
+    final allDelivered = otherParticipants.every(
+      (p) => deliveredTo.containsKey(p),
+    );
+    if (allDelivered) return MessageStatus.delivered;
+
+    return MessageStatus.sent;
   }
 
   // report user
@@ -533,15 +694,21 @@ class ChatService extends ChangeNotifier {
     String? replyToSender,
     String? localId,
     String? replyToType,
+    bool isGroup = false,
   }) async {
     final String currentUserID = _auth.currentUser!.uid;
     final String currentUserEmail = _auth.currentUser!.email!;
     final Timestamp timestamp = Timestamp.now();
 
-    // construct chat room id
-    List<String> ids = [currentUserID, receiverID];
-    ids.sort();
-    String chatRoomID = ids.join('_');
+    // construct chat room id - for groups, receiverID is the groupId
+    String chatRoomID;
+    if (isGroup) {
+      chatRoomID = receiverID;
+    } else {
+      List<String> ids = [currentUserID, receiverID];
+      ids.sort();
+      chatRoomID = ids.join('_');
+    }
 
     // upload voice file to storage
     File voiceFile = File(voicePath);
@@ -577,25 +744,38 @@ class ChatService extends ChangeNotifier {
       localId: localId ?? const Uuid().v4(),
     );
 
+    // Prepare message data - add group tracking fields if it's a group
+    final messageData = message.toFirestoreMap();
+    if (isGroup) {
+      // For groups, track who has read/delivered the message
+      messageData['readBy'] = {currentUserID: timestamp};
+      messageData['deliveredTo'] = {currentUserID: timestamp};
+    }
+
     // add to firestore
     await _firestore
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection('Messages')
-        .add(message.toFirestoreMap());
+        .add(messageData);
 
-    // update last message
-    await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
-      'participants': [currentUserID, receiverID],
+    // Update chat room metadata
+    final chatRoomUpdate = <String, dynamic>{
       'lastMessage': '🎤 Voice message',
       'lastMessageTimestamp': timestamp,
       'lastMessageStatus': MessageStatus.sent,
       'lastSenderId': currentUserID,
-    }, SetOptions(merge: true));
+    };
 
-    // NOTE: We intentionally keep the local voice file for instant playback.
-    // The file will be cleaned up when the cache manager handles it or
-    // when the user logs in on another device (they'll download from URL).
+    // Only set participants for 1-on-1 chats (groups already have participants)
+    if (!isGroup) {
+      chatRoomUpdate['participants'] = [currentUserID, receiverID];
+    }
+
+    await _firestore
+        .collection('Chat_rooms')
+        .doc(chatRoomID)
+        .set(chatRoomUpdate, SetOptions(merge: true));
 
     // Play send sound on successful upload
     SoundService().playSend();
@@ -613,15 +793,21 @@ class ChatService extends ChangeNotifier {
     String? replyToMessage,
     String? replyToSender,
     String? replyToType,
+    bool isGroup = false,
   }) async {
     final String currentuserID = _auth.currentUser!.uid;
     final String currentuserEmail = _auth.currentUser!.email!;
     final Timestamp timestamp = Timestamp.now();
 
-    // construct chat room id
-    List<String> ids = [currentuserID, receiverID];
-    ids.sort();
-    String chatRoomID = ids.join('_');
+    // construct chat room id - for groups, receiverID is the groupId
+    String chatRoomID;
+    if (isGroup) {
+      chatRoomID = receiverID;
+    } else {
+      List<String> ids = [currentuserID, receiverID];
+      ids.sort();
+      chatRoomID = ids.join('_');
+    }
 
     String mediaUrl;
     String type;
@@ -700,25 +886,43 @@ class ChatService extends ChangeNotifier {
       replyToType: replyToType,
     );
 
+    // Prepare message data - add group tracking fields if it's a group
+    final messageData = message.toFirestoreMap();
+    if (isGroup) {
+      // For groups, track who has read/delivered the message
+      messageData['readBy'] = {currentuserID: timestamp};
+      messageData['deliveredTo'] = {currentuserID: timestamp};
+    }
+
     // add to firestore
     await _firestore
         .collection('Chat_rooms')
         .doc(chatRoomID)
         .collection('Messages')
-        .add(message.toFirestoreMap());
+        .add(messageData);
 
     // update last message
     String lastMsg = caption != null
         ? '$notificationText: $caption'
         : notificationText;
 
-    await _firestore.collection('Chat_rooms').doc(chatRoomID).set({
-      'participants': [currentuserID, receiverID],
+    // Update chat room metadata
+    final chatRoomUpdate = <String, dynamic>{
       'lastMessage': lastMsg,
       'lastMessageTimestamp': timestamp,
       'lastMessageStatus': MessageStatus.sent,
       'lastSenderId': currentuserID,
-    }, SetOptions(merge: true));
+    };
+
+    // Only set participants for 1-on-1 chats (groups already have participants)
+    if (!isGroup) {
+      chatRoomUpdate['participants'] = [currentuserID, receiverID];
+    }
+
+    await _firestore
+        .collection('Chat_rooms')
+        .doc(chatRoomID)
+        .set(chatRoomUpdate, SetOptions(merge: true));
 
     // Play send sound on successful upload
     SoundService().playSend();
@@ -1009,7 +1213,7 @@ class ChatService extends ChangeNotifier {
       final otherUserRecording = recording[receiverId];
       if (otherUserRecording == null) return false;
 
-      // check if typing time is recent(within 5 seconds)
+      // check if recording time is recent(within 5 seconds)
       if (otherUserRecording is Timestamp) {
         final recordingTime = otherUserRecording.toDate();
         final now = DateTime.now();
@@ -1048,10 +1252,12 @@ class ChatService extends ChangeNotifier {
   }
 
   // create Group chat
-  Future<void> createGroup(
+  Future<String> createGroup(
     String groupName,
-    List<String> selectedUserIds,
-  ) async {
+    List<String> selectedUserIds, {
+    String? groupPhotoUrl,
+    String? groupDescription,
+  }) async {
     final currentUserId = _auth.currentUser!.uid;
 
     // list of members
@@ -1064,11 +1270,17 @@ class ChatService extends ChangeNotifier {
       'chatRoomId': newDocRef.id,
       'type': 'group',
       'groupName': groupName,
+      'groupPhotoUrl': groupPhotoUrl,
+      'groupDescription': groupDescription ?? '',
       'participants': members,
       'adminId': currentUserId,
       'createdAt': FieldValue.serverTimestamp(),
-      'lastMessage': '',
+      'lastMessage': null,
       'lastMessageTimestamp': FieldValue.serverTimestamp(),
+      'lastMessageStatus': null,
+      'lastSenderId': null,
     });
+
+    return newDocRef.id;
   }
 }

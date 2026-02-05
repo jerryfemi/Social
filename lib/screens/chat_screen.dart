@@ -25,11 +25,15 @@ class ChatScreen extends ConsumerStatefulWidget {
   final String receiverName;
   final String receiverId;
   final String? photoUrl;
+  final String? scrollToMessageId;
+  final bool isGroup;
   const ChatScreen({
     super.key,
     required this.receiverName,
     required this.receiverId,
     required this.photoUrl,
+    this.scrollToMessageId,
+    this.isGroup = false,
   });
 
   @override
@@ -100,8 +104,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isTyping = false;
 
   // Helper method to get chat room ID
-  String _getChatRoomId(String userId1, String userId2) {
-    final ids = [userId1, userId2]..sort();
+  String _getChatRoomId(String currentUserId, String otherUserIdOrGroupId) {
+    // For groups, the second param IS the groupId (which is the chatRoomId)
+    if (widget.isGroup) {
+      return otherUserIdOrGroupId;
+    }
+    // For 1-on-1 chats, sort both user IDs and join
+    final ids = [currentUserId, otherUserIdOrGroupId]..sort();
     return ids.join('_');
   }
 
@@ -111,6 +120,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _scrollController.addListener(_onScroll);
     // Tell notification service we're in this chat (suppress notifications from this user)
     _notificationService.setCurrentChat(widget.receiverId);
+
+    // If we have a message to scroll to (from search), trigger it after build
+    if (widget.scrollToMessageId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Small delay to ensure messages are loaded
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _scrollToMessage(widget.scrollToMessageId!);
+          }
+        });
+      });
+    }
   }
 
   void _setTyping(bool typing) {
@@ -237,7 +258,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       context.pop(); // Close dialog
 
       // We convert the Color to a Hex String (e.g., "0xFF000000")
-      String colorString = '0x${color.value.toRadixString(16).toUpperCase()}';
+      String colorString =
+          '0x${color.toARGB32().toRadixString(16).toUpperCase()}';
       await ref
           .read(chatServiceProvider)
           .setChatWallpaperColor(widget.receiverId, colorString);
@@ -496,7 +518,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return actions.map((action) {
       final isDark = Brightness.dark == Theme.of(context).brightness;
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
         child: IconButton(
           icon: Icon(
             action['icon'] as IconData,
@@ -522,9 +544,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
         // Mark messages as read
         Future.delayed(Duration.zero, () {
-          ref
-              .read(chatServiceProvider)
-              .messageRead(currentUserId, widget.receiverId);
+          if (widget.isGroup) {
+            // For groups, use the group-specific read function
+            ref
+                .read(chatServiceProvider)
+                .markGroupMessagesAsRead(widget.receiverId);
+          } else {
+            // For 1-on-1 chats, use existing function
+            ref
+                .read(chatServiceProvider)
+                .messageRead(currentUserId, widget.receiverId);
+          }
         });
 
         //  Only scroll if New Messages > Old Messages
@@ -676,10 +706,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         isSelectionMode: _isSelectionMode,
         selectedCount: _selectedMessageIds.length,
         actions: appBarActions,
-        onProfileTap: () => context.push(
-          '/chat_profile/${widget.receiverId}',
-          extra: widget.photoUrl,
-        ),
+        isGroup: widget.isGroup,
+        onProfileTap: () {
+          if (widget.isGroup) {
+            context.push(
+              '/group_info/${widget.receiverId}',
+              extra: widget.photoUrl,
+            );
+          } else {
+            context.push(
+              '/chat_profile/${widget.receiverId}',
+              extra: widget.photoUrl,
+            );
+          }
+        },
       ),
       body: Column(
         children: [
@@ -743,6 +783,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         onScrollToMessage: (id) => _scrollToMessage(id),
                         onReply: _setReplyTo,
                         highlightedMessageId: _highlightedMessageId,
+                        isGroup: widget.isGroup,
                       ),
                     ),
 
@@ -793,6 +834,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       onCancelReply: _clearReply,
       focusNode: _focusNode,
       inputBackgroundColor: inputBackgroundColor,
+      isGroup: widget.isGroup,
       onMessageSent: () {
         _setTyping(false);
         _scrollDown();

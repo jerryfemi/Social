@@ -21,6 +21,7 @@ class MessageListView extends ConsumerStatefulWidget {
   final Function(Map<String, dynamic>, String, String) onReply;
   final Function(String) onScrollToMessage;
   final String? highlightedMessageId;
+  final bool isGroup;
 
   const MessageListView({
     super.key,
@@ -35,6 +36,7 @@ class MessageListView extends ConsumerStatefulWidget {
     required this.onReply,
     required this.onScrollToMessage,
     this.highlightedMessageId,
+    this.isGroup = false,
   });
 
   @override
@@ -256,7 +258,12 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
     final isSender = message.senderID == currentUserId;
     final alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
     final bubbleColor = isSender ? Colors.purpleAccent : Colors.grey;
-    final name = isSender ? 'You' : widget.receiverName;
+    
+    // For group chats, use the actual sender name from the message
+    // For 1-on-1 chats, use 'You' or receiverName
+    final name = isSender
+        ? 'You'
+        : (widget.isGroup ? message.senderName : widget.receiverName);
 
     final starredAsync = ref.watch(starredMessagesProvider);
     final starredIds = starredAsync.value?.docs.map((e) => e.id).toSet() ?? {};
@@ -284,6 +291,7 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
       isSelected: isSelected,
       isFirstInSequence: isFirstInSequence,
       isLastInSequence: isLastInSequence,
+      showSenderName: widget.isGroup, // Show sender name in group chats
       onReply: () => widget.onReply(messageData, messageKey, name),
       onReplyTap: (id) => widget.onScrollToMessage(id),
       onLongPress: () {

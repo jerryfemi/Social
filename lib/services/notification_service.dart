@@ -179,7 +179,6 @@ class NotificationService {
 
     // Show Notification
     RemoteNotification? notification = message.notification;
-    AndroidNotification? android = message.notification?.android;
 
     final String? senderId = message.data['senderID'];
     final String? receiverId = message.data['receiverID'];
@@ -215,11 +214,9 @@ class NotificationService {
           icon: '@mipmap/ic_launcher',
           importance: Importance.max,
           priority: Priority.high,
-          playSound: false, // Disable system sound, we play our own
+          playSound: false,
         ),
-        iOS: DarwinNotificationDetails(
-          presentSound: false, // Disable iOS system sound too
-        ),
+        iOS: DarwinNotificationDetails(presentSound: false),
       ),
       payload: jsonEncode(message.data),
     );
@@ -231,7 +228,7 @@ class NotificationService {
 
   void _navigateFromData(Map<String, dynamic> data) {
     final String? senderName = data['senderName'];
-    final String? senderId = data['senderID']; // Ensure case matches payload
+    final String? senderId = data['senderID'];
     final String? photoUrl = data['photoUrl'];
 
     if (senderId != null) {

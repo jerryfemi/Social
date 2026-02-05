@@ -11,7 +11,6 @@ import 'package:social/providers/chat_provider.dart';
 import 'package:social/providers/hive_service_provider.dart';
 import 'package:social/services/chat_service.dart';
 import 'package:social/services/hive_service.dart';
-import 'package:social/services/sound_service.dart';
 import 'package:social/services/sync_service.dart';
 import 'package:uuid/uuid.dart';
 
@@ -168,6 +167,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String? replyToType,
     String type = 'text',
     String? caption,
+    bool isGroup = false,
   }) async {
     try {
       final currentUser = ref.read(authServiceProvider).currentUser!;
@@ -216,12 +216,13 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         lastMessageTimestamp: message.timestamp,
         lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
+        isGroup: isGroup,
       );
 
       debugPrint('💾 Message saved to Hive, UI updated');
 
       // 4. Upload to Firestore in background
-      _uploadTextMessageToFirestore(message, receiverId);
+      _uploadTextMessageToFirestore(message, receiverId, isGroup: isGroup);
     } catch (e) {
       debugPrint('❌ Error sending message: $e');
       rethrow;
@@ -231,8 +232,9 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
   /// Upload text message to Firestore (background)
   Future<void> _uploadTextMessageToFirestore(
     Message message,
-    String receiverId,
-  ) async {
+    String receiverId, {
+    bool isGroup = false,
+  }) async {
     try {
       // Check if message was deleted before upload starts
       if (!message.isInBox) {
@@ -255,6 +257,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         replyToType: message.replyToType,
         type: message.type,
         caption: message.caption,
+        isGroup: isGroup,
       );
 
       // Note: We don't mark as synced here because Firestore listener will do it
@@ -279,6 +282,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String? replyToMessage,
     String? replyToSender,
     String? replyToType,
+    bool isGroup = false,
   }) async {
     try {
       final currentUser = ref.read(authServiceProvider).currentUser!;
@@ -329,6 +333,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         lastMessageTimestamp: message.timestamp,
         lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
+        isGroup: isGroup,
       );
 
       debugPrint('💾 Media message saved to Hive with local path');
@@ -340,6 +345,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         fileName,
         imageBytes: imageBytes,
         videoPath: videoPath,
+        isGroup: isGroup,
       );
     } catch (e) {
       debugPrint('❌ Error sending media message: $e');
@@ -354,6 +360,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String fileName, {
     Uint8List? imageBytes,
     String? videoPath,
+    bool isGroup = false,
   }) async {
     try {
       // Check if message was deleted before upload starts
@@ -378,6 +385,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         replyToMessage: message.replyToMessage,
         replyToSender: message.replyToSender,
         replyToType: message.replyToType,
+        isGroup: isGroup,
       );
 
       debugPrint('☁️ Media uploaded to Firebase');
@@ -401,6 +409,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
     String? replyToMessage,
     String? replyToSender,
     String? replyToType,
+    bool isGroup = false,
   }) async {
     try {
       final currentUser = ref.read(authServiceProvider).currentUser!;
@@ -444,12 +453,13 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         lastMessageTimestamp: message.timestamp,
         lastMessageStatus: 'pending',
         lastSenderId: currentUser.uid,
+        isGroup: isGroup,
       );
 
       debugPrint('💾 Voice message saved to Hive with local path');
 
       // 4. Upload to Firebase Storage in background
-      _uploadVoiceToFirestore(message, receiverId);
+      _uploadVoiceToFirestore(message, receiverId, isGroup: isGroup);
     } catch (e) {
       debugPrint('❌ Error sending voice message: $e');
       rethrow;
@@ -459,8 +469,9 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
   /// Upload voice to Firebase Storage and Firestore (background)
   Future<void> _uploadVoiceToFirestore(
     Message message,
-    String receiverId,
-  ) async {
+    String receiverId, {
+    bool isGroup = false,
+  }) async {
     try {
       // Check if message was deleted before upload starts
       if (!message.isInBox) {
@@ -482,6 +493,7 @@ class ChatMessagesNotifier extends StateNotifier<AsyncValue<List<Message>>> {
         replyToMessage: message.replyToMessage,
         replyToSender: message.replyToSender,
         replyToType: message.replyToType,
+        isGroup: isGroup,
       );
 
       debugPrint('☁️ Voice message uploaded to Firebase');

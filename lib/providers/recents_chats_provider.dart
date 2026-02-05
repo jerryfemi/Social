@@ -65,7 +65,26 @@ class RecentChatsNotifier extends StateNotifier<List<Map<String, dynamic>>> {
           for (final doc in snapshot.docs) {
             final data = doc.data();
             final participants = List<String>.from(data['participants']);
+            final String? chatType = data['type'];
 
+            // Handle GROUP chats
+            if (chatType == 'group') {
+              await _hiveService.updateRecentChat(
+                userId: doc.id, // Use chat room ID for groups
+                username: data['groupName'] ?? 'Unnamed Group',
+                profileImage: data['groupPhotoUrl'],
+                lastMessage: data['lastMessage'] ?? '',
+                lastMessageTimestamp: data['lastMessageTimestamp'] != null
+                    ? (data['lastMessageTimestamp'] as Timestamp).toDate()
+                    : DateTime.now(),
+                lastMessageStatus: data['lastMessageStatus'] ?? 'sent',
+                lastSenderId: data['lastSenderId'] ?? '',
+                isGroup: true,
+              );
+              continue;
+            }
+
+            // Handle 1-on-1 chats
             final otherUserId = participants.firstWhere(
               (id) => id != _currentUserId,
               orElse: () => '',
@@ -89,10 +108,12 @@ class RecentChatsNotifier extends StateNotifier<List<Map<String, dynamic>>> {
               username: userData['username'],
               profileImage: userData['profileImage'],
               lastMessage: data['lastMessage'] ?? '',
-              lastMessageTimestamp: (data['lastMessageTimestamp'] as Timestamp)
-                  .toDate(),
+              lastMessageTimestamp: data['lastMessageTimestamp'] != null
+                  ? (data['lastMessageTimestamp'] as Timestamp).toDate()
+                  : DateTime.now(),
               lastMessageStatus: data['lastMessageStatus'] ?? 'sent',
               lastSenderId: data['lastSenderId'] ?? '',
+              isGroup: false,
             );
           }
 

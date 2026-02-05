@@ -113,7 +113,7 @@ class Message extends HiveObject {
     return {
       'senderID': senderID,
       'senderEmail': senderEmail,
-      'receiverId': receiverID,
+      'receiverID': receiverID, // Fixed: was 'receiverId' (lowercase d)
       'senderName': senderName,
       'message': message,
       'timestamp': Timestamp.fromDate(timestamp),
@@ -139,7 +139,10 @@ class Message extends HiveObject {
       senderID: data['senderID'] ?? '',
       senderEmail: data['senderEmail'] ?? '',
       senderName: data['senderName'] ?? '',
-      receiverID: data['receiverId'] ?? '',
+      receiverID:
+          data['receiverID'] ??
+          data['receiverId'] ??
+          '', // Support both for existing data
       message: data['message'] ?? '',
       timestamp: (data['timestamp'] as Timestamp)
           .toDate(), // Convert to DateTime

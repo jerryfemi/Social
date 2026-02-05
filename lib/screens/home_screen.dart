@@ -4,16 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:social/providers/chat_provider.dart';
+import 'package:social/models/message_search_result.dart';
 import 'package:social/providers/recents_chats_provider.dart';
 import 'package:social/services/auth_service.dart';
 import 'package:social/services/chat_service.dart';
+import 'package:social/services/hive_service.dart';
 import 'package:social/services/notification_service.dart';
 import 'package:social/services/sync_service.dart';
 import 'package:social/utils/date_utils.dart';
+import 'package:social/utils/new_chat_sheet.dart';
 import 'package:social/widgets/chat_bubble.dart';
 import 'package:social/widgets/my_sliver_app_bar.dart';
 import 'package:social/widgets/search_bar.dart';
+import 'package:social/widgets/search_result_tile.dart';
 import 'package:social/widgets/user_tile.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -30,8 +33,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   final chatservice = ChatService();
   final authService = AuthService();
   final _notificationService = NotificationService();
+  final _hiveService = HiveService();
+  bool isSelected = false;
+  Set<String> selectedUserIds = {};
   final _syncService = SyncService();
   StreamSubscription? _deliverySubscription;
+
+  // Search state
+  List<MessageSearchResult> _searchResults = [];
+  bool _isSearching = false;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -79,38 +90,132 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     controller.dispose();
     _deliverySubscription?.cancel();
+    _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  // Perform message search with debouncing
+  void _performSearch(String query) {
+    _searchDebounce?.cancel();
+
+    if (query.isEmpty) {
+      setState(() {
+        _searchQuery = '';
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _searchQuery = query;
+      _isSearching = true;
+    });
+
+    // Debounce search by 300ms to avoid searching on every keystroke
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () async {
+      final results = await _hiveService.searchAllMessages(
+        query,
+        authService.currentUser!.uid,
+      );
+      if (mounted && _searchQuery == query) {
+        setState(() {
+          _searchResults = results;
+          _isSearching = false;
+        });
+      }
+    });
+  }
+
+  void _toggleSelection(String userId) {
+    setState(() {
+      if (selectedUserIds.contains(userId)) {
+        selectedUserIds.remove(userId);
+
+        if (selectedUserIds.isEmpty) {
+          isSelected = false;
+        }
+      } else {
+        selectedUserIds.add(userId);
+      }
+    });
+  }
+
+  // ENTER SELECTION MODE(onLongPress userTile)
+  void _enterSelectionMode(String userId) {
+    setState(() {
+      isSelected = true;
+      selectedUserIds.add(userId);
+    });
+  }
+
+  //EXIT SELECTION MODE
+  void _exitSelectionMode() {
+    setState(() {
+      isSelected = false;
+      selectedUserIds.clear();
+    });
+  }
+
+  Future<void> _showNewChatSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      builder: (context) => NewChatSheet(selectedUserIds: selectedUserIds),
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
+    );
+
+    // Clear selection after sheet closes
+    _exitSelectionMode();
   }
 
   @override
   Widget build(BuildContext context) {
+    final chatList = ref.watch(recentChatsProvider);
     return Scaffold(
       body: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
           //  APP BAR
-          MyAppBar(),
+          MyAppBar(
+            onPresed: _showNewChatSheet,
+            text: selectedUserIds.length.toString(),
+            isSelection: isSelected,
+          ),
 
           // SEARCH BAR
           SliverPersistentHeader(
             pinned: false,
             delegate: SearchBarDelegate(
               controller: controller,
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
+              onChanged: _performSearch,
             ),
           ),
 
           // CONTENT
           Builder(
             builder: (context) {
-              final chatList = _searchQuery.isEmpty
-                  ? ref.watch(recentChatsProvider)
-                  : ref.watch(searchUsersProvider(_searchQuery)).value ?? [];
+              // Show search results if searching
+              if (_searchQuery.isNotEmpty) {
+                if (_isSearching) {
+                  return const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
 
+                if (_searchResults.isEmpty) {
+                  return _buildEmptySearchState(context);
+                }
+
+                return _buildSearchResults(context);
+              }
+
+              // Normal chat list
               if (chatList.isEmpty) {
                 return Skeletonizer.sliver(
                   enabled: true,
@@ -159,17 +264,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final userData = dataList[index];
         bool isMe = userData['lastSenderId'] == authService.currentUser!.uid;
         final dateUtil = DateUtil();
+        final bool isThisSelected = selectedUserIds.contains(userData['uid']);
+        final bool isGroup = userData['isGroup'] == true;
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: UserTile(
             text: userData['username'],
             photourl: userData['profileImage'],
+            isGroup: isGroup,
+            onLongPress: isGroup
+                ? null
+                : () => _enterSelectionMode(userData['uid']),
 
-            // Show last message time
-            trailing:
-                (_searchQuery.isEmpty &&
-                    userData['lastMessageTimestamp'] != null)
+            // Show checkmark if selected, otherwise show time
+            trailing: isThisSelected
+                ? Icon(
+                    Icons.check_circle,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
+                : (_searchQuery.isEmpty &&
+                      userData['lastMessageTimestamp'] != null)
                 ? Text(
                     dateUtil.formatMessageTime(
                       userData['lastMessageTimestamp'],
@@ -210,10 +325,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     ],
                   )
                 : null,
-            onTap: () => context.push(
-              '/chat/${userData['username']}/${userData['uid']}',
-              extra: userData['profileImage'],
-            ),
+            onTap: () {
+              if (isSelected && !isGroup) {
+                _toggleSelection(userData['uid']);
+              } else {
+                context.push(
+                  '/chat/${userData['username']}/${userData['uid']}',
+                  extra: {
+                    'photoUrl': userData['profileImage'],
+                    'isGroup': isGroup,
+                  },
+                );
+              }
+            },
           ),
         );
       }, childCount: dataList.length),
@@ -256,6 +380,88 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // BUILD SEARCH RESULTS
+  Widget _buildSearchResults(BuildContext context) {
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          // Header showing result count
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                '${_searchResults.length} message${_searchResults.length == 1 ? '' : 's'} found',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.6),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            );
+          }
+
+          final result = _searchResults[index - 1];
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            child: SearchResultTile(
+              result: result,
+              onTap: () {
+                // Navigate to chat and scroll to the specific message
+                context.push(
+                  '/chat/${result.chatName}/${result.navigateId}',
+                  extra: {
+                    'photoUrl': result.chatPhotoUrl,
+                    'scrollToMessageId': result.message.localId,
+                    'isGroup': result.isGroup,
+                  },
+                );
+              },
+            ),
+          );
+        },
+        childCount: _searchResults.length + 1, // +1 for header
+      ),
+    );
+  }
+
+  // EMPTY SEARCH STATE
+  Widget _buildEmptySearchState(BuildContext context) {
+    return SliverFillRemaining(
+      hasScrollBody: false,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.search_off,
+              size: 60,
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'No messages found for "$_searchQuery"',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.tertiary,
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try a different search term',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.7),
+                fontSize: 14,
+              ),
+            ),
           ],
         ),
       ),

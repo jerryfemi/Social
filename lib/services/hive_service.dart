@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:social/models/message_hive.dart';
+import 'package:social/models/message_search_result.dart';
 import 'package:uuid/uuid.dart';
 
 class HiveService {
@@ -155,9 +156,6 @@ class HiveService {
     }
   }
 
-  // Sync Firestore message to Hive (avoid duplicates)
-  // In HiveService.dart
-
   Future<void> syncFirestoreMessage(
     String chatRoomId,
     bool isLocal,
@@ -167,7 +165,7 @@ class HiveService {
     try {
       final box = await getChatBox(chatRoomId);
 
-      // 1. Get the localId that we just added to the map!
+      // 1. Get the localId
       final incomingLocalId = firestoreData['localId'] as String?;
 
       final newSyncStatus = isLocal
@@ -254,6 +252,7 @@ class HiveService {
     required DateTime lastMessageTimestamp,
     required String lastMessageStatus,
     required String lastSenderId,
+    bool isGroup = false,
   }) async {
     try {
       await _recentChatsBox!.put(userId, {
@@ -264,10 +263,13 @@ class HiveService {
         'lastMessageTimestamp': lastMessageTimestamp.millisecondsSinceEpoch,
         'lastMessageStatus': lastMessageStatus,
         'lastSenderId': lastSenderId,
+        'isGroup': isGroup,
         'updatedAt': DateTime.now().millisecondsSinceEpoch,
       });
 
-      debugPrint('📝 Updated recent chat for $username');
+      debugPrint(
+        '📝 Updated recent chat for $username${isGroup ? ' (group)' : ''}',
+      );
     } catch (e) {
       debugPrint('❌ Error updating recent chat: $e');
     }
@@ -291,6 +293,75 @@ class HiveService {
       return chats;
     } catch (e) {
       debugPrint('❌ Error getting recent chats: $e');
+      return [];
+    }
+  }
+
+  /// Search all messages across all chats (local search - works offline)
+  /// Returns a list of MessageSearchResult with chat info and matching messages
+  Future<List<MessageSearchResult>> searchAllMessages(
+    String query,
+    String currentUserId,
+  ) async {
+    if (query.trim().isEmpty) return [];
+
+    final lowerQuery = query.toLowerCase().trim();
+    final results = <MessageSearchResult>[];
+
+    try {
+      // Get all recent chats to know which chat boxes exist
+      final recentChats = getRecentChats();
+
+      for (final chat in recentChats) {
+        final String otherUserId = chat['uid'] ?? '';
+        final bool isGroup = chat['isGroup'] == true;
+
+        if (otherUserId.isEmpty) continue;
+
+        // Build chat room ID
+        String chatRoomId;
+        if (isGroup) {
+          chatRoomId = otherUserId; // Groups use their ID directly
+        } else {
+          final ids = [currentUserId, otherUserId]..sort();
+          chatRoomId = ids.join('_');
+        }
+
+        // Get messages from this chat
+        final messages = await getChatMessages(chatRoomId);
+
+        // Search through messages (only text messages)
+        for (final msg in messages) {
+          // Search in message content
+          final messageText = msg.message.toLowerCase();
+          final captionText = (msg.caption ?? '').toLowerCase();
+
+          if (messageText.contains(lowerQuery) ||
+              captionText.contains(lowerQuery)) {
+            results.add(
+              MessageSearchResult(
+                chatRoomId: chatRoomId,
+                otherUserId: otherUserId,
+                chatName: chat['username'] ?? 'Unknown',
+                chatPhotoUrl: chat['profileImage'],
+                isGroup: isGroup,
+                message: msg,
+                query: query,
+              ),
+            );
+          }
+        }
+      }
+
+      // Sort by timestamp (newest first)
+      results.sort(
+        (a, b) => b.message.timestamp.compareTo(a.message.timestamp),
+      );
+
+      debugPrint('🔍 Found ${results.length} messages matching "$query"');
+      return results;
+    } catch (e) {
+      debugPrint('❌ Error searching messages: $e');
       return [];
     }
   }
