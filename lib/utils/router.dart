@@ -21,6 +21,7 @@ import 'package:social/screens/settings_screen.dart';
 import 'package:social/screens/starred_messages_screen.dart';
 import 'package:social/screens/video_player_screen.dart';
 import 'package:social/screens/view_image_screen.dart';
+import 'package:social/widgets/media_gallery_pager.dart';
 import 'package:social/widgets/my_bottom_nav_bar.dart';
 
 // Global navigator key for accessing navigation outside of Riverpod
@@ -172,6 +173,20 @@ final routerProvider = Provider<GoRouter>((ref) {
             isProfile: data['isProfile'] ?? false,
             senderName: data['senderName'],
             timestamp: data['timestamp'],
+          );
+        },
+      ),
+
+      GoRoute(
+        path: '/media_gallery',
+        builder: (context, state) {
+          final data = state.extra as Map<String, dynamic>;
+          final mediaMessages =
+              data['mediaMessages'] as List<Map<String, dynamic>>;
+          final initialIndex = data['initialIndex'] as int;
+          return MediaGalleryPager(
+            mediaMessages: mediaMessages,
+            initialIndex: initialIndex,
           );
         },
       ),

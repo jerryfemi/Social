@@ -1,43 +1,24 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:social/providers/chat_provider.dart';
 
-class GroupMediaScreen extends StatelessWidget {
+class GroupMediaScreen extends ConsumerWidget {
   final String groupId;
 
   const GroupMediaScreen({super.key, required this.groupId});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mediaAsync = ref.watch(groupMediaProvider(groupId));
+
     return Scaffold(
       appBar: AppBar(title: const Text('Media')),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('Chat_rooms')
-            .doc(groupId)
-            .collection('Messages')
-            .orderBy('timestamp', descending: true)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text('No media found'));
-          }
-
-          final mediaDocs = snapshot.data!.docs.where((doc) {
-            final type =
-                (doc.data() as Map<String, dynamic>)['type'] as String?;
-            return type == 'image' || type == 'video';
-          }).toList();
-
+      body: mediaAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, s) => Center(child: Text('Error: $e')),
+        data: (mediaDocs) {
           if (mediaDocs.isEmpty) {
             return const Center(child: Text('No media found'));
           }
@@ -59,25 +40,22 @@ class GroupMediaScreen extends StatelessWidget {
 
               return GestureDetector(
                 onTap: () {
-                  if (isVideo) {
-                    context.push(
-                      '/videoPlayer',
-                      extra: {
-                        'videoUrl': data['message'],
-                        'caption': data['caption'],
-                        'thumbnailUrl': data['thumbnailUrl'],
-                      },
-                    );
-                  } else {
-                    context.push(
-                      '/viewImage',
-                      extra: {
-                        'photoUrl': data['message'],
-                        'caption': data['caption'],
-                        'isProfile': false,
-                      },
-                    );
-                  }
+                  final galleryItems = mediaDocs.map((doc) {
+                    final d = doc.data() as Map<String, dynamic>;
+                    return {
+                      ...d,
+                      'senderID': d['senderID'] ?? '',
+                      'senderName': d['senderName'] ?? '',
+                    };
+                  }).toList();
+
+                  context.push(
+                    '/media_gallery',
+                    extra: {
+                      'mediaMessages': galleryItems,
+                      'initialIndex': index,
+                    },
+                  );
                 },
                 child: Stack(
                   fit: StackFit.expand,

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:metadata_fetch/metadata_fetch.dart';
 import 'package:http/http.dart' as http;
+import 'package:hive_flutter/hive_flutter.dart';
 
 /// Cached result for a link preview
 class LinkPreviewResult {
@@ -17,24 +18,65 @@ class LinkPreviewService {
   factory LinkPreviewService() => _instance;
   LinkPreviewService._internal();
 
-  // In-memory cache: URL -> Result
-  final Map<String, LinkPreviewResult> _cache = {};
+  // Hive Box name
+  static const String _boxName = 'link_previews';
+  Box? _box;
+
+  // In-memory cache: URL -> Result (for faster access during session)
+  final Map<String, LinkPreviewResult> _memoryCache = {};
 
   // Track in-progress requests to avoid duplicate fetches
   final Map<String, Future<LinkPreviewResult>> _inProgress = {};
 
+  /// Initialize Hive box
+  Future<void> init() async {
+    if (_box != null && _box!.isOpen) return;
+    _box = await Hive.openBox(_boxName);
+  }
+
   /// Check if a URL is already cached
-  bool isCached(String url) => _cache.containsKey(url);
+  bool isCached(String url) {
+    if (_memoryCache.containsKey(url)) return true;
+    return _box?.containsKey(url) ?? false;
+  }
 
   /// Get cached result (returns null if not cached)
-  LinkPreviewResult? getCached(String url) => _cache[url];
+  LinkPreviewResult? getCached(String url) {
+    // 1. Check memory
+    if (_memoryCache.containsKey(url)) {
+      return _memoryCache[url];
+    }
+
+    // 2. Check Hive
+    if (_box != null && _box!.containsKey(url)) {
+      final data = _box!.get(url) as Map;
+      final metadata = Metadata();
+      metadata.title = data['title'];
+      metadata.description = data['description'];
+      metadata.image = data['image'];
+      metadata.url = data['url'];
+
+      final result = LinkPreviewResult(
+        metadata: metadata,
+        hasError: data['hasError'] ?? false,
+      );
+
+      // Populate memory cache
+      _memoryCache[url] = result;
+      return result;
+    }
+
+    return null;
+  }
 
   /// Fetch metadata for a URL (uses cache if available)
   Future<LinkPreviewResult> getMetadata(String url) async {
+    // Ensure initialized
+    await init();
+
     // 1. Return cached result if available
-    if (_cache.containsKey(url)) {
-      return _cache[url]!;
-    }
+    final cached = getCached(url);
+    if (cached != null) return cached;
 
     // 2. If already fetching this URL, wait for that request
     if (_inProgress.containsKey(url)) {
@@ -47,7 +89,21 @@ class LinkPreviewService {
 
     try {
       final result = await future;
-      _cache[url] = result;
+
+      // Save to memory
+      _memoryCache[url] = result;
+
+      // Save to Hive
+      if (_box != null) {
+        await _box!.put(url, {
+          'title': result.metadata?.title,
+          'description': result.metadata?.description,
+          'image': result.metadata?.image,
+          'url': result.metadata?.url,
+          'hasError': result.hasError,
+        });
+      }
+
       return result;
     } finally {
       _inProgress.remove(url);
@@ -77,7 +133,6 @@ class LinkPreviewService {
         data.url = url;
 
         debugPrint("📄 Title found: ${data.title}");
-        debugPrint("🖼️ Image found: ${data.image}");
 
         // If no useful metadata, mark as error
         if (data.title == null && data.image == null) {
@@ -95,12 +150,14 @@ class LinkPreviewService {
   }
 
   /// Clear the cache (useful for testing or memory management)
-  void clearCache() {
-    _cache.clear();
+  Future<void> clearCache() async {
+    _memoryCache.clear();
+    await _box?.clear();
   }
 
   /// Remove a specific URL from cache
-  void removeFromCache(String url) {
-    _cache.remove(url);
+  Future<void> removeFromCache(String url) async {
+    _memoryCache.remove(url);
+    await _box?.delete(url);
   }
 }

@@ -8,7 +8,12 @@ import 'package:social/widgets/user_tile.dart';
 
 class NewChatSheet extends ConsumerStatefulWidget {
   final Set<String> selectedUserIds;
-  const NewChatSheet({super.key, this.selectedUserIds = const {}});
+  final List<Map<String, dynamic>> preSelectedUsers;
+  const NewChatSheet({
+    super.key,
+    this.selectedUserIds = const {},
+    this.preSelectedUsers = const [],
+  });
   @override
   ConsumerState<NewChatSheet> createState() => _NewChatSheetState();
 }
@@ -30,7 +35,8 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
     // If pre-selected users exist, enter selection mode
     if (widget.selectedUserIds.isNotEmpty) {
       _isSelectionMode = true;
-      _selectedUserIds = Set.from(widget.selectedUserIds); // Create a copy
+      _selectedUserIds = Set.from(widget.selectedUserIds);
+      _selectedUsers.addAll(widget.preSelectedUsers);
     }
   }
 
@@ -69,7 +75,7 @@ class _NewChatSheetState extends ConsumerState<NewChatSheet> {
   }
 
   void _goToCreateGroup() {
-    context.pop(context); 
+    context.pop(context);
     context.push('/create-group', extra: _selectedUsers);
   }
 

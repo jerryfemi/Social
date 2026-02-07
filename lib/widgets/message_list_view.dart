@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:social/models/message_hive.dart' as hive_model;
 import 'package:social/providers/chat_message_provider.dart';
@@ -22,6 +23,7 @@ class MessageListView extends ConsumerStatefulWidget {
   final Function(String) onScrollToMessage;
   final String? highlightedMessageId;
   final bool isGroup;
+  final Function(String)? onMediaTap;
 
   const MessageListView({
     super.key,
@@ -37,6 +39,7 @@ class MessageListView extends ConsumerStatefulWidget {
     required this.onScrollToMessage,
     this.highlightedMessageId,
     this.isGroup = false,
+    this.onMediaTap,
   });
 
   @override
@@ -258,7 +261,7 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
     final isSender = message.senderID == currentUserId;
     final alignment = isSender ? Alignment.centerRight : Alignment.centerLeft;
     final bubbleColor = isSender ? Colors.purpleAccent : Colors.grey;
-    
+
     // For group chats, use the actual sender name from the message
     // For 1-on-1 chats, use 'You' or receiverName
     final name = isSender
@@ -311,6 +314,7 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
             .read(chatMessagesProvider(widget.chatRoomId).notifier)
             .retryMessage(message.localId);
       },
+      onMediaTap: () => _openMediaGallery(message.localId),
     );
   }
 
@@ -384,5 +388,66 @@ class _MessageListViewState extends ConsumerState<MessageListView> {
       'localFilePath': msg.localFilePath,
       'syncStatus': msg.syncStatus.toString(),
     };
+  }
+
+  void _openMediaGallery(String startMessageId) {
+    if (widget.onMediaTap != null) {
+      widget.onMediaTap!(startMessageId);
+      return;
+    }
+
+    // Default implementation: Gather media messages and navigate
+    final messages = ref.read(chatMessagesProvider(widget.chatRoomId)).value;
+    if (messages == null) return;
+
+    final mediaMessages = messages
+        .where((m) => m.type == 'image' || m.type == 'video')
+        .map((m) => _convertHiveMessageToMap(m))
+        .toList();
+
+    // Sort by timestamp (though usually already sorted? Hive messages likely come sorted or we reversed them)
+    // The list is "reversedMessages" in build, but here we access the provider's list which is raw.
+    // Let's ensure chronological order for the gallery usually.
+    // Provider list is usually sorted by timestamp desc or asc depending on query.
+    // Let's assume ascending for gallery (oldest to newest) or descending?
+    // Usually gallery shows chronologically.
+    // If the provider returns DESC (newest first), we might want to reverse it.
+    mediaMessages.sort((a, b) {
+      final t1 = a['timestamp'] as Timestamp;
+      final t2 = b['timestamp'] as Timestamp;
+      return t1.compareTo(t2);
+    });
+
+    // We can use the startMessageId to scroll to the initial index if we were navigating to gallery from here
+    // but typically we push to gallery from the Media Tile or similar.
+    // If we want to open gallery from a specific message in the list, we'd need this logic.
+    // For now, it's unused.
+    // I should check _convertHiveMessageToMap again.
+    // Yes, 'localFilePath' is there but 'id' (localId) is not there explicitly unless I add it.
+    // Let's assume startMessageId matches 'message' (url) or 'localFilePath' for now, or better:
+    // I will add localId to the map in _convertHiveMessageToMap!
+
+    // But for now, let's find index by... well, I can't easily without ID.
+    // Let's update _convertHiveMessageToMap to include 'id'.
+
+    // Fallback: use loop with Hive objects to find index first?
+    int index = 0;
+    // Better: Filter hive messages first, find index, then convert.
+    final sortedMedia = messages
+        .where((m) => m.type == 'image' || m.type == 'video')
+        .toList();
+    sortedMedia.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    index = sortedMedia.indexWhere((m) => m.localId == startMessageId);
+    if (index == -1) index = 0;
+
+    final mediaMaps = sortedMedia
+        .map((m) => _convertHiveMessageToMap(m))
+        .toList();
+
+    context.push(
+      '/media_gallery',
+      extra: {'mediaMessages': mediaMaps, 'initialIndex': index},
+    );
   }
 }

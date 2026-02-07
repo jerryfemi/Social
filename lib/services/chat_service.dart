@@ -16,6 +16,13 @@ class ChatService extends ChangeNotifier {
   final AuthService _auth = AuthService();
   final StorageService _storageService = StorageService();
 
+  // Helper to get chat room ID
+  String getChatRoomId(String userId, String otherUserId) {
+    List<String> ids = [userId, otherUserId];
+    ids.sort();
+    return ids.join('_');
+  }
+
   // 1. GET RECENT CHATS STREAM ()
   Stream<List<Map<String, dynamic>>> getRecentChats(String currentUserId) {
     return _firestore
@@ -48,6 +55,7 @@ class ChatService extends ChangeNotifier {
                 'username': chatRoomData['groupName'] ?? 'Unnamed Group',
                 'profileImage': chatRoomData['groupPhotoUrl'],
                 'isGroup': true,
+                'chatRoomId': doc.id,
                 'participants': participants,
                 'lastMessage': chatRoomData['lastMessage'] ?? '',
                 'lastMessageTimestamp': chatRoomData['lastMessageTimestamp'],
@@ -82,6 +90,7 @@ class ChatService extends ChangeNotifier {
             recentChats.add({
               ...userData, // username, profileImage, etc.
               'isGroup': false,
+              'chatRoomId': doc.id,
               'lastMessage': chatRoomData['lastMessage'] ?? '',
               'lastMessageTimestamp': chatRoomData['lastMessageTimestamp'],
               'lastMessageStatus': chatRoomData['lastMessageStatus'],
@@ -284,21 +293,44 @@ class ChatService extends ChangeNotifier {
         .where('receiverId', isEqualTo: currentUserId)
         .where('status', isEqualTo: MessageStatus.sent)
         .snapshots()
-        .listen((snapshot) {
+        .listen((snapshot) async {
           if (snapshot.docs.isNotEmpty) {
-            final batch = _firestore.batch();
-            for (var doc in snapshot.docs) {
-              batch.update(doc.reference, {'status': MessageStatus.delivered});
+            // Get list of users I have blocked
+            final blockedSnapshot = await _firestore
+                .collection('Users')
+                .doc(currentUserId)
+                .collection('BlockedUsers')
+                .get();
+            final blockedIds = blockedSnapshot.docs.map((d) => d.id).toSet();
 
-              if (doc.reference.parent.parent != null) {
-                batch.update(doc.reference.parent.parent!, {
-                  'lastMessageStatus': MessageStatus.delivered,
+            final batch = _firestore.batch();
+            bool hasUpdates = false;
+
+            for (var doc in snapshot.docs) {
+              final senderId = doc['senderID'];
+              // If sender is blocked, do NOT mark as delivered (so they see only 1 check)
+              if (blockedIds.contains(senderId)) continue;
+
+              final status = doc['status'];
+              if (status != MessageStatus.delivered &&
+                  status != MessageStatus.read) {
+                batch.update(doc.reference, {
+                  'status': MessageStatus.delivered,
                 });
+
+                if (doc.reference.parent.parent != null) {
+                  batch.update(doc.reference.parent.parent!, {
+                    'lastMessageStatus': MessageStatus.delivered,
+                  });
+                }
+                hasUpdates = true;
               }
             }
 
-            batch.commit();
-            debugPrint("Delivered ${snapshot.docs.length} messages globally.");
+            if (hasUpdates) {
+              await batch.commit();
+              debugPrint("Delivered messages globally (filtered blocked).");
+            }
           }
         });
   }
@@ -1236,10 +1268,37 @@ class ChatService extends ChangeNotifier {
 
   // Stream to listen for a user's online status
   Stream<Map<String, dynamic>> getUserOnlineStatus(String userId) {
-    return _firestore.collection('Users').doc(userId).snapshots().map((
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return Stream.value({'isOnline': false});
+
+    return _firestore.collection('Users').doc(userId).snapshots().asyncMap((
       snapshot,
-    ) {
+    ) async {
       if (!snapshot.exists) {
+        return {'isOnline': false, 'lastSeen': null};
+      }
+
+      // Check if THEY blocked ME
+      final startWithMe = await _firestore
+          .collection('Users')
+          .doc(userId)
+          .collection('BlockedUsers')
+          .doc(currentUserId)
+          .get();
+
+      if (startWithMe.exists) {
+        return {'isOnline': false, 'lastSeen': null};
+      }
+
+      // Check if I blocked THEM
+      final iBlockedThem = await _firestore
+          .collection('Users')
+          .doc(currentUserId)
+          .collection('BlockedUsers')
+          .doc(userId)
+          .get();
+
+      if (iBlockedThem.exists) {
         return {'isOnline': false, 'lastSeen': null};
       }
 
@@ -1282,5 +1341,102 @@ class ChatService extends ChangeNotifier {
     });
 
     return newDocRef.id;
+  }
+
+  // UPDATE GROUP INFO
+  Future<void> updateGroupInfo(
+    String groupId, {
+    String? name,
+    String? about,
+    String? photoUrl,
+  }) async {
+    final Map<String, dynamic> data = {};
+    if (name != null) data['groupName'] = name;
+    if (about != null) data['groupDescription'] = about;
+    if (photoUrl != null) data['groupPhotoUrl'] = photoUrl;
+
+    if (data.isNotEmpty) {
+      await _firestore.collection('Chat_rooms').doc(groupId).update(data);
+    }
+  }
+
+  // LEAVE GROUP
+  Future<void> leaveGroup(String groupId) async {
+    final currentUserId = _auth.currentUser!.uid;
+    await _firestore.collection('Chat_rooms').doc(groupId).update({
+      'participants': FieldValue.arrayRemove([currentUserId]),
+    });
+  }
+
+  // GROUP TYPING STATUS
+  Stream<Map<String, dynamic>> getGroupTypingStatus(String groupId) {
+    return _firestore.collection('Chat_rooms').doc(groupId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return {};
+      final data = snapshot.data();
+      if (data == null || !data.containsKey('typing')) return {};
+
+      final typingMap = data['typing'] as Map<String, dynamic>;
+      final now = DateTime.now();
+
+      // Filter active typing (recent timestamp)
+      final activeTyping = <String, dynamic>{};
+      typingMap.forEach((userId, timestamp) {
+        if (userId == _auth.currentUser?.uid) return; // Don't show self
+
+        if (timestamp is Timestamp) {
+          final time = timestamp.toDate();
+          if (now.difference(time).inSeconds < 5) {
+            activeTyping[userId] = true;
+          }
+        }
+      });
+
+      return activeTyping;
+    });
+  }
+
+  // GROUP RECORDING STATUS
+  Stream<Map<String, dynamic>> getGroupRecordingStatus(String groupId) {
+    return _firestore.collection('Chat_rooms').doc(groupId).snapshots().map((
+      snapshot,
+    ) {
+      if (!snapshot.exists) return {};
+      final data = snapshot.data();
+      if (data == null || !data.containsKey('recording')) return {};
+
+      final recordingMap = data['recording'] as Map<String, dynamic>;
+      final now = DateTime.now();
+
+      final activeRecording = <String, dynamic>{};
+      recordingMap.forEach((userId, timestamp) {
+        if (userId == _auth.currentUser?.uid) return;
+
+        if (timestamp is Timestamp) {
+          final time = timestamp.toDate();
+          if (now.difference(time).inSeconds < 5) {
+            activeRecording[userId] = true;
+          }
+        }
+      });
+
+      return activeRecording;
+    });
+  }
+
+  // DELETE CHAT (Remove self from participants)
+  Future<void> deleteChat(String chatId) async {
+    final currentUserId = _auth.currentUser!.uid;
+    await _firestore.collection('Chat_rooms').doc(chatId).update({
+      'participants': FieldValue.arrayRemove([currentUserId]),
+    });
+  }
+
+  // DELETE GROUP (Admin Only - Deletes entire group)
+  Future<void> deleteGroup(String groupId) async {
+    // Ideally use Cloud Function for recursive delete of subcollections
+    // For now, we delete the room doc so it stops appearing in queries
+    await _firestore.collection('Chat_rooms').doc(groupId).delete();
   }
 }

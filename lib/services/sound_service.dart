@@ -20,7 +20,6 @@ class SoundService {
   final AudioPlayer _notificationPlayer = AudioPlayer();
 
   bool _isInitialized = false;
-  bool _soundsEnabled = true;
 
   // Local cache directory path
   String? _soundsDir;
@@ -47,8 +46,8 @@ class SoundService {
   // static const String _notificationSound = 'sounds/send.mp3';
 
   /// Enable or disable sounds globally
-  set soundsEnabled(bool value) => _soundsEnabled = value;
-  bool get soundsEnabled => _soundsEnabled;
+  /// Enable or disable sounds globally
+  bool soundsEnabled = true;
 
   /// Initialize audio players and download/cache sounds
   Future<void> init() async {
@@ -139,7 +138,7 @@ class SoundService {
 
   /// Play sound when sending a message
   Future<void> playSend() async {
-    if (!_soundsEnabled) return;
+    if (!soundsEnabled) return;
 
     // Check connectivity - don't play if offline
     final connectivityResult = await Connectivity().checkConnectivity();
@@ -166,7 +165,7 @@ class SoundService {
 
   /// Play sound when receiving a message (in-chat)
   Future<void> playReceive() async {
-    if (!_soundsEnabled) return;
+    if (!soundsEnabled) return;
     try {
       await _receivePlayer.stop();
       final source = await _getSource('receive');
@@ -188,7 +187,7 @@ class SoundService {
 
   /// Play sound for notifications (home screen / background)
   Future<void> playNotification() async {
-    if (!_soundsEnabled) return;
+    if (!soundsEnabled) return;
     try {
       await _notificationPlayer.stop();
       final source = await _getSource('notification');

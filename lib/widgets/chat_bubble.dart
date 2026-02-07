@@ -35,7 +35,10 @@ class ChatBubble extends ConsumerStatefulWidget {
     this.isLastInSequence = true,
     this.onRetry,
     this.showSenderName = false,
+    this.onMediaTap,
   });
+
+  final VoidCallback? onMediaTap;
 
   final Alignment alignment;
   final bool isSender;
@@ -432,22 +435,24 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
           children: [
             // Tappable media
             GestureDetector(
-              onTap: isVideo
-                  ? () => context.push(
-                      '/videoPlayer',
-                      extra: {'videoUrl': message, 'caption': caption},
-                    )
-                  : () => context.push(
-                      '/viewImage',
-                      extra: {
-                        'photoUrl': message,
-                        'caption': caption,
-                        'senderName': widget.isSender
-                            ? 'You'
-                            : widget.senderName,
-                        'timestamp': widget.data['timestamp'],
-                      },
-                    ),
+              onTap:
+                  widget.onMediaTap ??
+                  (isVideo
+                      ? () => context.push(
+                          '/videoPlayer',
+                          extra: {'videoUrl': message, 'caption': caption},
+                        )
+                      : () => context.push(
+                          '/viewImage',
+                          extra: {
+                            'photoUrl': message,
+                            'caption': caption,
+                            'senderName': widget.isSender
+                                ? 'You'
+                                : widget.senderName,
+                            'timestamp': widget.data['timestamp'],
+                          },
+                        )),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Hero(
@@ -788,7 +793,13 @@ class _ChatBubbleState extends ConsumerState<ChatBubble>
       }
     }
 
-    textSpans.add(const WidgetSpan(child: SizedBox(width: 70)));
+    // Calculate reserved width for the timestamp row
+    double reservedWidth = 52.0; // Base for Time (approx)
+    if (widget.isStarred) reservedWidth += 16.0;
+    if (isEdited) reservedWidth += 36.0;
+    if (widget.isSender) reservedWidth += 18.0;
+
+    textSpans.add(WidgetSpan(child: SizedBox(width: reservedWidth)));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,53 +1,34 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart'; // NEW
 import 'package:social/providers/auth_provider.dart';
+import 'package:social/providers/chat_provider.dart'; // NEW
+import 'package:social/services/storage_service.dart'; // NEW
+import 'package:social/widgets/chat_stats_circular.dart';
+import 'package:social/widgets/my_alert_dialog.dart';
+import 'package:social/widgets/user_tile.dart';
 
-/// Provider to get group info from Firestore
-final groupInfoProvider = StreamProvider.family<DocumentSnapshot, String>((
-  ref,
-  groupId,
-) {
-  return FirebaseFirestore.instance
-      .collection('Chat_rooms')
-      .doc(groupId)
-      .snapshots();
-});
-
-/// Provider to get group media (images & videos)
-/// Note: We fetch all messages and filter locally to avoid Firestore composite index requirement
-final groupMediaProvider =
-    StreamProvider.family<List<QueryDocumentSnapshot>, String>((ref, groupId) {
-      return FirebaseFirestore.instance
-          .collection('Chat_rooms')
-          .doc(groupId)
-          .collection('Messages')
-          .orderBy('timestamp', descending: true)
-          .snapshots()
-          .map((snapshot) {
-            // Filter to only media types locally
-            return snapshot.docs
-                .where((doc) {
-                  final type = doc.data()['type'] as String?;
-                  return type == 'image' || type == 'video';
-                })
-                .take(10) // Limit to 10 for preview
-                .toList();
-          });
-    });
-
-class GroupInfoScreen extends ConsumerWidget {
+class GroupInfoScreen extends ConsumerStatefulWidget {
   final String groupId;
   final String? photoUrl;
 
   const GroupInfoScreen({super.key, required this.groupId, this.photoUrl});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final groupAsync = ref.watch(groupInfoProvider(groupId));
-    final mediaAsync = ref.watch(groupMediaProvider(groupId));
+  ConsumerState<GroupInfoScreen> createState() => _GroupInfoScreenState();
+}
+
+class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
+  // Edit State
+  final _storageService = StorageService();
+  final _imagePicker = ImagePicker();
+
+  @override
+  Widget build(BuildContext context) {
+    final groupAsync = ref.watch(groupInfoProvider(widget.groupId));
+    final mediaAsync = ref.watch(groupMediaProvider(widget.groupId));
     final currentUserId = ref.read(authServiceProvider).currentUser!.uid;
 
     return Scaffold(
@@ -56,6 +37,12 @@ class GroupInfoScreen extends ConsumerWidget {
           'Group Info',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
+        actions: [
+          IconButton(
+            onPressed: () => _showLeaveGroupDialog(context, ref),
+            icon: Icon(Icons.logout_outlined),
+          ),
+        ],
       ),
       body: groupAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -79,26 +66,31 @@ class GroupInfoScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 // GROUP PHOTO
-                GestureDetector(
-                  onTap: groupPhoto != null && groupPhoto.isNotEmpty
-                      ? () => context.push(
-                          '/viewImage',
-                          extra: {'photoUrl': groupPhoto, 'isProfile': true},
-                        )
-                      : null,
-                  child: ClipOval(
-                    child: groupPhoto != null && groupPhoto.isNotEmpty
-                        ? Hero(
-                            tag: 'group_pfp',
-                            child: CachedNetworkImage(
-                              imageUrl: groupPhoto,
-                              height: 120,
-                              width: 120,
-                              fit: BoxFit.cover,
-                              placeholder: (context, url) =>
-                                  const CircularProgressIndicator(),
-                              errorWidget: (context, url, error) =>
-                                  CircleAvatar(
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    GestureDetector(
+                      onTap: groupPhoto != null && groupPhoto.isNotEmpty
+                          ? () => context.push(
+                              '/viewImage',
+                              extra: {
+                                'photoUrl': groupPhoto,
+                                'isProfile': true,
+                              },
+                            )
+                          : null,
+                      child: ClipOval(
+                        child: groupPhoto != null && groupPhoto.isNotEmpty
+                            ? Hero(
+                                tag: 'pfp',
+                                child: CachedNetworkImage(
+                                  imageUrl: groupPhoto,
+                                  height: 120,
+                                  width: 120,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) =>
+                                      const CircularProgressIndicator(),
+                                  errorWidget: (_, __, ___) => CircleAvatar(
                                     radius: 60,
                                     backgroundColor: Theme.of(
                                       context,
@@ -111,30 +103,65 @@ class GroupInfoScreen extends ConsumerWidget {
                                       ).colorScheme.tertiary,
                                     ),
                                   ),
-                            ),
-                          )
-                        : CircleAvatar(
-                            radius: 60,
+                                ),
+                              )
+                            : CircleAvatar(
+                                radius: 60,
+                                backgroundColor: Theme.of(
+                                  context,
+                                ).colorScheme.secondary,
+                                child: Icon(
+                                  Icons.group,
+                                  size: 50,
+                                  color: Theme.of(context).colorScheme.tertiary,
+                                ),
+                              ),
+                      ),
+                    ),
+                    if (isAdmin)
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: GestureDetector(
+                          onTap: _pickAndUploadImage,
+                          child: CircleAvatar(
+                            radius: 18,
                             backgroundColor: Theme.of(
                               context,
-                            ).colorScheme.secondary,
+                            ).colorScheme.primary,
                             child: Icon(
-                              Icons.group,
-                              size: 50,
-                              color: Theme.of(context).colorScheme.tertiary,
+                              Icons.edit,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.onPrimary,
                             ),
                           ),
-                  ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 12),
 
                 // GROUP NAME
-                Text(
-                  groupName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      groupName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 22,
+                      ),
+                    ),
+                    if (isAdmin)
+                      IconButton(
+                        icon: const Icon(Icons.edit, size: 20),
+                        onPressed: () => _showEditDialog(
+                          'Group Name',
+                          groupName,
+                          (val) => _updateGroup(name: val),
+                        ),
+                      ),
+                  ],
                 ),
                 Text(
                   '${participants.length} members',
@@ -148,8 +175,21 @@ class GroupInfoScreen extends ConsumerWidget {
                 const SizedBox(height: 20),
 
                 // ABOUT SECTION
-                if (description.isNotEmpty) ...[
-                  _buildSectionHeader(context, 'About'),
+                if (description.isNotEmpty || isAdmin) ...[
+                  _buildSectionHeader(
+                    context,
+                    'About',
+                    trailing: isAdmin
+                        ? IconButton(
+                            icon: const Icon(Icons.edit, size: 18),
+                            onPressed: () => _showEditDialog(
+                              'Description',
+                              description,
+                              (val) => _updateGroup(about: val),
+                            ),
+                          )
+                        : null,
+                  ),
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
@@ -170,7 +210,8 @@ class GroupInfoScreen extends ConsumerWidget {
                   context,
                   'Media',
                   trailing: IconButton(
-                    onPressed: () => context.push('/group_media/$groupId'),
+                    onPressed: () =>
+                        context.push('/group_media/${widget.groupId}'),
                     icon: const Icon(Icons.arrow_forward_ios, size: 18),
                   ),
                 ),
@@ -220,24 +261,25 @@ class GroupInfoScreen extends ConsumerWidget {
 
                           return GestureDetector(
                             onTap: () {
-                              if (isVideo) {
-                                context.push(
-                                  '/videoPlayer',
-                                  extra: {
-                                    'videoUrl': mediaData['message'],
-                                    'caption': mediaData['caption'],
-                                    'thumbnailUrl': mediaData['thumbnailUrl'],
-                                  },
-                                );
-                              } else {
-                                context.push(
-                                  '/viewImage',
-                                  extra: {
-                                    'photoUrl': url,
-                                    'caption': mediaData['caption'],
-                                  },
-                                );
-                              }
+                              final galleryItems = mediaDocs.map((doc) {
+                                final data = doc.data() as Map<String, dynamic>;
+                                // Ensure timestamp is passed for the new header format
+                                return {
+                                  ...data,
+                                  'senderID':
+                                      data['senderID'] ?? '', // Fallback
+                                  'senderName':
+                                      data['senderName'] ?? '', // Fallback
+                                };
+                              }).toList();
+
+                              context.push(
+                                '/media_gallery',
+                                extra: {
+                                  'mediaMessages': galleryItems,
+                                  'initialIndex': index,
+                                },
+                              );
                             },
                             child: Container(
                               width: 100,
@@ -294,7 +336,7 @@ class GroupInfoScreen extends ConsumerWidget {
                     );
                   },
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 30),
 
                 // MEMBERS SECTION
                 _buildSectionHeader(
@@ -308,34 +350,29 @@ class GroupInfoScreen extends ConsumerWidget {
                   ),
                   child: Column(
                     children: participants.map((memberId) {
-                      return _MemberTile(
+                      return MemberTile(
                         memberId: memberId,
                         isAdmin: memberId == adminId,
                         isCurrentUser: memberId == currentUserId,
                         canRemove: isAdmin && memberId != currentUserId,
-                        groupId: groupId,
+                        groupId: widget.groupId,
                       );
                     }).toList(),
                   ),
                 ),
-                const SizedBox(height: 20),
 
-                // LEAVE GROUP BUTTON
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _showLeaveGroupDialog(context, ref),
-                    icon: const Icon(Icons.exit_to_app, color: Colors.red),
-                    label: const Text(
-                      'Leave Group',
-                      style: TextStyle(color: Colors.red),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
+                // STATS SECTION
+                ChatStatsCircular(groupId: widget.groupId),
+                const SizedBox(height: 30),
+
+                if (isAdmin)
+                  FilledButton.icon(
+                    onPressed: () => _showDeleteGroupDialog(context, ref),
+                    icon: const Icon(Icons.delete_forever),
+                    label: const Text('Delete Group'),
                   ),
-                ),
+
+                const SizedBox(height: 20),
               ],
             ),
           );
@@ -359,7 +396,9 @@ class GroupInfoScreen extends ConsumerWidget {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.7),
             ),
           ),
           if (trailing != null) trailing,
@@ -368,45 +407,112 @@ class GroupInfoScreen extends ConsumerWidget {
     );
   }
 
+  // UPDATE GROUP INFO
+  Future<void> _updateGroup({
+    String? name,
+    String? about,
+    String? photoUrl,
+  }) async {
+    // setState(() => _isUpdating = true);
+    try {
+      await ref
+          .read(chatServiceProvider)
+          .updateGroupInfo(
+            widget.groupId,
+            name: name,
+            about: about,
+            photoUrl: photoUrl,
+          );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error updating group: $e')));
+      }
+    } finally {
+      // if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  // EDIT DIALOG
+  void _showEditDialog(
+    String title,
+    String initialValue,
+    Function(String) onSave,
+  ) {
+    final controller = TextEditingController(text: initialValue);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit $title'),
+        content: TextField(
+          controller: controller,
+          decoration: InputDecoration(hintText: 'Enter new $title'),
+          textCapitalization: TextCapitalization.sentences,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => context.pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final val = controller.text.trim();
+              if (val.isNotEmpty) {
+                onSave(val);
+                context.pop();
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // PICK IMAGE
+  Future<void> _pickAndUploadImage() async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+      );
+      if (picked == null) return;
+
+      // setState(() => _isUpdating = true);
+
+      final bytes = await picked.readAsBytes();
+      final url = await _storageService.uploadGroupPhoto(
+        'group_${widget.groupId}_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        bytes,
+      );
+
+      await _updateGroup(photoUrl: url);
+    } catch (e) {
+      debugPrint('Error uploading image: $e');
+    } finally {
+      // if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
   void _showLeaveGroupDialog(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Leave Group'),
-        content: const Text('Are you sure you want to leave this group?'),
+        content: const Text(
+          'Are you sure you want to leave this group? You won\'t be able to see previous messages or send new ones.',
+        ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => context.pop(),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
-              final currentUserId = ref
-                  .read(authServiceProvider)
-                  .currentUser!
-                  .uid;
-              try {
-                await FirebaseFirestore.instance
-                    .collection('Chat_rooms')
-                    .doc(groupId)
-                    .update({
-                      'participants': FieldValue.arrayRemove([currentUserId]),
-                    });
-                if (context.mounted) {
-                  Navigator.pop(context); // Close dialog
-                  context.go('/home'); // Go to home
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('You left the group')),
-                  );
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to leave group: $e')),
-                  );
-                }
-              }
+              await ref.read(chatServiceProvider).leaveGroup(widget.groupId);
+              if (context.mounted) context.go('/home');
             },
             child: const Text('Leave', style: TextStyle(color: Colors.red)),
           ),
@@ -414,186 +520,26 @@ class GroupInfoScreen extends ConsumerWidget {
       ),
     );
   }
-}
 
-/// A thinner member tile for the members list
-class _MemberTile extends ConsumerWidget {
-  final String memberId;
-  final bool isAdmin;
-  final bool isCurrentUser;
-  final bool canRemove;
-  final String groupId;
-
-  const _MemberTile({
-    required this.memberId,
-    required this.isAdmin,
-    required this.isCurrentUser,
-    required this.canRemove,
-    required this.groupId,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('Users')
-          .doc(memberId)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData || !snapshot.data!.exists) {
-          return const SizedBox.shrink();
-        }
-
-        final userData = snapshot.data!.data() as Map<String, dynamic>;
-        final username = userData['username'] ?? 'Unknown';
-        final photoUrl = userData['profileImage'] as String?;
-
-        return InkWell(
-          onTap: isCurrentUser
-              ? null
-              : () => context.push('/chat_profile/$memberId'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                // Profile photo (smaller)
-                ClipOval(
-                  child: photoUrl != null && photoUrl.isNotEmpty
-                      ? CachedNetworkImage(
-                          imageUrl: photoUrl,
-                          width: 44,
-                          height: 44,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => CircleAvatar(
-                            radius: 22,
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.secondary,
-                          ),
-                          errorWidget: (context, url, error) => CircleAvatar(
-                            radius: 22,
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.secondary,
-                            child: const Icon(Icons.person, size: 20),
-                          ),
-                        )
-                      : CircleAvatar(
-                          radius: 22,
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.secondary,
-                          child: Icon(
-                            Icons.person,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.tertiary,
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 12),
-
-                // Name & badges
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              isCurrentUser ? 'You' : username,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (isAdmin) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primary.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'Admin',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Remove button (for admin only)
-                if (canRemove)
-                  IconButton(
-                    onPressed: () => _removeMember(context, ref),
-                    icon: Icon(
-                      Icons.remove_circle_outline,
-                      color: Colors.red.withValues(alpha: 0.7),
-                      size: 22,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _removeMember(BuildContext context, WidgetRef ref) {
+  void _showDeleteGroupDialog(BuildContext context, WidgetRef ref) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove Member'),
+        title: const Text('Delete Group'),
         content: const Text(
-          'Are you sure you want to remove this member from the group?',
+          'Are you sure you want to delete this group? This action cannot be undone and will remove the group for all members.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => context.pop(),
             child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
-              try {
-                await FirebaseFirestore.instance
-                    .collection('Chat_rooms')
-                    .doc(groupId)
-                    .update({
-                      'participants': FieldValue.arrayRemove([memberId]),
-                    });
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Member removed')),
-                  );
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to remove member: $e')),
-                  );
-                }
-              }
+              await ref.read(chatServiceProvider).deleteGroup(widget.groupId);
+              if (context.mounted) context.go('/home');
             },
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),

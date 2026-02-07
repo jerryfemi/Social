@@ -17,6 +17,7 @@ import 'package:social/services/sound_service.dart';
 import 'package:social/widgets/chat_app_bar.dart';
 import 'package:social/widgets/chat_input_bar.dart';
 import 'package:social/widgets/liquid_glass.dart';
+import 'package:social/widgets/message_info_bottom_sheet.dart';
 import 'package:social/widgets/message_list_view.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
 import 'package:social/widgets/pinned_message.dart';
@@ -455,79 +456,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  List<Widget> _buildSelectionModeActions(
-    String chatRoomId,
-    String currentUserId,
-  ) {
-    // 1. Get Selected Messages from the provider
-    final messages =
-        ref.watch(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+  // SHOW MESSAGE INFO
+  void _showMessageInfo() {
+    if (_selectedMessageIds.length != 1) return;
+    final messageId = _selectedMessageIds.first;
+    _exitSelectionMode();
 
-    final selectedMsgs = messages
-        .where((m) => _selectedMessageIds.contains(m.localId))
-        .toList();
+    final chatRoomId = _getChatRoomId(
+      authService.currentUser!.uid,
+      widget.receiverId,
+    );
 
-    if (selectedMsgs.isEmpty) return [];
-
-    final count = selectedMsgs.length;
-    final first = selectedMsgs.first;
-    final isMe = first.senderID == currentUserId;
-
-    // 2. Define Action List
-    final List<Map<String, dynamic>> actions = [];
-
-    // PIN
-    final isMedia = first.type == 'image' || first.type == 'video';
-    final hasCaption = first.caption != null && first.caption!.isNotEmpty;
-    bool canPin = true;
-    if (isMedia && !hasCaption) canPin = false;
-
-    if (count == 1 && canPin) {
-      actions.add({
-        'icon': Icons.push_pin,
-        'onTap': () => _pinSelectedMessage(first),
-      });
-    }
-
-    // DELETE (Always avail in selection)
-    actions.add({
-      'icon': Icons.delete,
-      'onTap': () => _deleteSelectedMessages(),
-    });
-
-    // STAR (Always avail)
-    actions.add({
-      'icon': Icons.star_border,
-      'onTap': () => _starSelectedMessages(messages),
-    });
-
-    // EDIT
-    if (count == 1 && isMe && first.type == 'text') {
-      actions.add({
-        'icon': Icons.edit,
-        'onTap': () => _editSelectedMessage(first),
-      });
-    }
-
-    // REPORT
-    if (count == 1 && !isMe) {
-      actions.add({'icon': Icons.flag, 'onTap': () => _reportMessage(first)});
-    }
-
-    // 3. Map to Widgets
-    return actions.map((action) {
-      final isDark = Brightness.dark == Theme.of(context).brightness;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 3),
-        child: IconButton(
-          icon: Icon(
-            action['icon'] as IconData,
-            color: isDark ? Colors.white : Colors.black,
-          ),
-          onPressed: action['onTap'] as VoidCallback,
-        ),
-      );
-    }).toList();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => MessageInfoBottomSheet(
+        chatRoomId: chatRoomId,
+        messageId: messageId,
+        isGroup: widget.isGroup,
+      ),
+    );
   }
 
   @override
@@ -652,13 +601,79 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
 
     // Build Actions
-    List<Widget> appBarActions;
+    List<Widget> appBarActions = [];
+
     if (_isSelectionMode) {
-      appBarActions = _buildSelectionModeActions(chatRoomId, currentUserId);
-    } else {
-      appBarActions = [
-        PopupMenuButton<String>(
-          onSelected: (value) async {
+      appBarActions.add(
+        IconButton(
+          icon: const Icon(Icons.delete),
+          onPressed: _deleteSelectedMessages,
+        ),
+      );
+      appBarActions.add(
+        IconButton(
+          icon: const Icon(Icons.star),
+          onPressed: () {
+            final messages =
+                ref.watch(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+            _starSelectedMessages(messages);
+          },
+        ),
+      );
+      if (_selectedMessageIds.length == 1) {
+        final messages =
+            ref.watch(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+        final selectedMsg = messages.firstWhere(
+          (m) => m.localId == _selectedMessageIds.first,
+          orElse: () => hive_model.Message(
+            senderID: '',
+            senderEmail: '',
+            message: '',
+            timestamp: DateTime.now(),
+            senderName: '',
+            receiverID: '',
+            localId: '',
+            status: 'sent',
+            type: 'text',
+            syncStatus: hive_model.MessageSyncStatus.synced,
+          ),
+        );
+
+        if (selectedMsg.senderID == currentUserId) {
+          appBarActions.add(
+            IconButton(
+              icon: const Icon(Icons.info_outline),
+              onPressed: _showMessageInfo,
+            ),
+          );
+        }
+      }
+    }
+
+    appBarActions.add(
+      PopupMenuButton<String>(
+        onSelected: (value) async {
+          if (_isSelectionMode) {
+            final messages =
+                ref.read(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+            final selectedMsgs = messages
+                .where((m) => _selectedMessageIds.contains(m.localId))
+                .toList();
+            if (selectedMsgs.isEmpty) return;
+            final first = selectedMsgs.first;
+
+            switch (value) {
+              case 'edit':
+                _editSelectedMessage(first);
+                break;
+              case 'pin':
+                _pinSelectedMessage(first);
+                break;
+              case 'report':
+                _reportMessage(first);
+                break;
+            }
+          } else {
             if (value == 'solid_color') {
               _showColorPickerDialog();
             } else if (value == 'reset_wallpaper') {
@@ -666,38 +681,111 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             } else if (value == 'set_wallpaper') {
               await _setWallpaper();
             }
-          },
-          itemBuilder: (context) => const [
-            PopupMenuItem<String>(
-              value: 'set_wallpaper',
-              child: Row(
-                children: [
-                  Icon(Icons.wallpaper, size: 20),
-                  SizedBox(width: 8),
-                  Text('Set wallpaper'),
-                ],
+          }
+        },
+        itemBuilder: (context) {
+          if (_isSelectionMode) {
+            final messages =
+                ref.watch(chatMessagesProvider(chatRoomId)).asData?.value ?? [];
+            final selectedMsgs = messages
+                .where((m) => _selectedMessageIds.contains(m.localId))
+                .toList();
+
+            if (selectedMsgs.isEmpty) return [];
+
+            final count = selectedMsgs.length;
+            final first = selectedMsgs.first;
+            final isMe = first.senderID == currentUserId;
+            final List<PopupMenuEntry<String>> items = [];
+
+            // EDIT
+            if (count == 1 && isMe && first.type == 'text') {
+              items.add(
+                const PopupMenuItem<String>(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit, size: 20),
+                      SizedBox(width: 8),
+                      Text('Edit'),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // PIN
+            final isMedia = first.type == 'image' || first.type == 'video';
+            final hasCaption =
+                first.caption != null && first.caption!.isNotEmpty;
+            bool canPin = true;
+            if (isMedia && !hasCaption) canPin = false;
+
+            if (count == 1 && canPin) {
+              items.add(
+                const PopupMenuItem<String>(
+                  value: 'pin',
+                  child: Row(
+                    children: [
+                      Icon(Icons.push_pin, size: 20),
+                      SizedBox(width: 8),
+                      Text('Pin'),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // REPORT
+            if (count == 1 && !isMe) {
+              items.add(
+                const PopupMenuItem<String>(
+                  value: 'report',
+                  child: Row(
+                    children: [
+                      Icon(Icons.flag, size: 20),
+                      SizedBox(width: 8),
+                      Text('Report'),
+                    ],
+                  ),
+                ),
+              );
+            }
+            return items;
+          } else {
+            return const [
+              PopupMenuItem<String>(
+                value: 'set_wallpaper',
+                child: Row(
+                  children: [
+                    Icon(Icons.wallpaper, size: 20),
+                    SizedBox(width: 8),
+                    Text('Set wallpaper'),
+                  ],
+                ),
               ),
-            ),
-            PopupMenuItem<String>(
-              value: 'solid_color',
-              child: Row(
-                children: [
-                  Icon(Icons.format_paint_rounded, size: 20),
-                  SizedBox(width: 8),
-                  Text('Background Color'),
-                ],
+              PopupMenuItem<String>(
+                value: 'solid_color',
+                child: Row(
+                  children: [
+                    Icon(Icons.format_paint_rounded, size: 20),
+                    SizedBox(width: 8),
+                    Text('Background Color'),
+                  ],
+                ),
               ),
-            ),
-            PopupMenuItem<String>(
-              value: 'reset_wallpaper',
-              child: Text('Reset chat wallpaper'),
-            ),
-          ],
-        ),
-      ];
-    }
+              PopupMenuItem<String>(
+                value: 'reset_wallpaper',
+                child: Text('Reset chat wallpaper'),
+              ),
+            ];
+          }
+        },
+      ),
+    );
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: ChatAppBar(
         receiverName: widget.receiverName,
         receiverId: widget.receiverId,
@@ -721,106 +809,117 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           }
         },
       ),
-      body: Column(
-        children: [
-          // PINNED MESSAGE
-          if (chatRoomAsync.value?.data() != null)
-            Builder(
-              builder: (context) {
-                final data =
-                    chatRoomAsync.value!.data() as Map<String, dynamic>;
-                if (data.containsKey('pinnedMessage')) {
-                  final pMsg = data['pinnedMessage'] as Map<String, dynamic>?;
-                  if (pMsg != null) {
-                    return PinnedMessageWidget(
-                      color:
-                          inputBackgroundColor ??
-                          Theme.of(
-                            context,
-                          ).colorScheme.secondary.withValues(alpha: 0.5),
-                      pinnedData: pMsg,
-                      receiverId: widget.receiverId,
-                      onTap: () {
-                        _scrollToMessage(pMsg['id']);
-                      },
-                    );
-                  }
-                }
-                return SizedBox.shrink();
-              },
-            ),
-
-          Expanded(
-            child: AnnotatedRegion<SystemUiOverlayStyle>(
-              value: SystemUiOverlayStyle(
-                systemNavigationBarColor: sysNavBarColor,
-                systemNavigationBarIconBrightness: sysNavBarIconBrightness,
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  color:
-                      backgroundColor ?? Theme.of(context).colorScheme.surface,
-                  image: (isImageUrl && wallpaperUrl != null)
-                      ? DecorationImage(
-                          image: CachedNetworkImageProvider(wallpaperUrl),
-                          fit: BoxFit.cover,
-                        )
-                      : null,
-                ),
-                child: Stack(
-                  children: [
-                    // MESSAGE LIST
-                    Positioned.fill(
-                      child: MessageListView(
-                        chatRoomId: chatRoomId,
+      body: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          children: [
+            // PINNED MESSAGE
+            if (chatRoomAsync.value?.data() != null)
+              Builder(
+                builder: (context) {
+                  final data =
+                      chatRoomAsync.value!.data() as Map<String, dynamic>;
+                  if (data.containsKey('pinnedMessage')) {
+                    final pMsg = data['pinnedMessage'] as Map<String, dynamic>?;
+                    if (pMsg != null) {
+                      return PinnedMessageWidget(
+                        color:
+                            inputBackgroundColor ??
+                            Theme.of(
+                              context,
+                            ).colorScheme.secondary.withValues(alpha: 0.5),
+                        pinnedData: pMsg,
                         receiverId: widget.receiverId,
-                        receiverName: widget.receiverName,
-                        scrollController: _scrollController,
-                        isSelectionMode: _isSelectionMode,
-                        selectedMessageIds: _selectedMessageIds,
-                        onEnterSelectionMode: _enterSelectionMode,
-                        onToggleSelection: _toggleSelection,
-                        onScrollToMessage: (id) => _scrollToMessage(id),
-                        onReply: _setReplyTo,
-                        highlightedMessageId: _highlightedMessageId,
-                        isGroup: widget.isGroup,
+                        onTap: () {
+                          _scrollToMessage(pMsg['id']);
+                        },
+                      );
+                    }
+                  }
+                  return SizedBox.shrink();
+                },
+              ),
+
+            Expanded(
+              child: AnnotatedRegion<SystemUiOverlayStyle>(
+                value: SystemUiOverlayStyle(
+                  systemNavigationBarColor: sysNavBarColor,
+                  systemNavigationBarIconBrightness: sysNavBarIconBrightness,
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color:
+                        backgroundColor ??
+                        Theme.of(context).colorScheme.surface,
+                    image: (isImageUrl && wallpaperUrl != null)
+                        ? DecorationImage(
+                            image: CachedNetworkImageProvider(wallpaperUrl),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
+                  child: Stack(
+                    children: [
+                      // MESSAGE LIST
+                      Positioned.fill(
+                        child: MessageListView(
+                          chatRoomId: chatRoomId,
+                          receiverId: widget.receiverId,
+                          receiverName: widget.receiverName,
+                          scrollController: _scrollController,
+                          isSelectionMode: _isSelectionMode,
+                          selectedMessageIds: _selectedMessageIds,
+                          onEnterSelectionMode: _enterSelectionMode,
+                          onToggleSelection: _toggleSelection,
+                          onScrollToMessage: (id) => _scrollToMessage(id),
+                          onReply: _setReplyTo,
+                          highlightedMessageId: _highlightedMessageId,
+                          isGroup: widget.isGroup,
+                        ),
                       ),
-                    ),
 
-                    // MESSAGE INPUT
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: _buildMessageInput(context, inputBackgroundColor),
-                    ),
-
-                    // SCROLL BUTTON()
-                    if (_showScrollToBottom)
+                      // MESSAGE INPUT
                       Positioned(
-                        bottom: 90,
-                        right: 15,
-                        child: GestureDetector(
-                          onTap: _scrollDown,
-                          child: LiquidGlass(
-                            borderRadius: 30,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(shape: BoxShape.circle),
-                              child: Icon(
-                                Icons.keyboard_arrow_down_rounded,
-                                color: Theme.of(context).colorScheme.primary,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: _buildMessageInput(
+                          context,
+                          inputBackgroundColor,
+                        ),
+                      ),
+
+                      // SCROLL BUTTON()
+                      if (_showScrollToBottom)
+                        Positioned(
+                          bottom: 90,
+                          right: 15,
+                          child: GestureDetector(
+                            onTap: _scrollDown,
+                            child: LiquidGlass(
+                              borderRadius: 30,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -82,18 +82,78 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
                   ),
                   // For groups, show member count or nothing
                   // For 1-on-1, show typing/online status
+                  // Group Chat: Show typing/recording OR member list
                   if (isGroup)
-                    Text(
-                      'Group Chat',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withOpacity(0.6),
-                      ),
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final gTypingAsync = ref.watch(
+                          groupTypingStatusProvider(receiverId),
+                        );
+                        final gRecordingAsync = ref.watch(
+                          groupRecordingStatusProvider(receiverId),
+                        );
+                        final groupInfoAsync = ref.watch(
+                          groupInfoProvider(receiverId),
+                        );
+
+                        final typingMap = gTypingAsync.value ?? {};
+                        final recordingMap = gRecordingAsync.value ?? {};
+
+                        // 1. Recording (Priority)
+                        if (recordingMap.isNotEmpty) {
+                          return _buildGroupStatusText(
+                            context,
+                            ref,
+                            recordingMap.keys.toList(),
+                            'recording...',
+                          );
+                        }
+
+                        // 2. Typing
+                        if (typingMap.isNotEmpty) {
+                          return _buildGroupStatusText(
+                            context,
+                            ref,
+                            typingMap.keys.toList(),
+                            'typing...',
+                          );
+                        }
+
+                        // 3. Member List (Default)
+                        // We need to fetch member names. This might be expensive to do here if not cached.
+                        // Ideally, groupInfo contains participant IDs.
+                        // We can show "X members" or fetch names if we have a provider for it.
+                        // For now, let's show user counts or "Tap for info" which is standard if we don't have all user data loaded.
+                        // OR we can try to show names if we have them in cache (UserProfileProvider).
+
+                        return groupInfoAsync.when(
+                          data: (doc) {
+                            if (!doc.exists) return const SizedBox.shrink();
+                            final data = doc.data() as Map<String, dynamic>;
+                            final attendees = List<String>.from(
+                              data['participants'] ?? [],
+                            );
+
+                            // If we want to show names, we'd need to resolve IDs to Names.
+                            // That requires watching multiple user streams which is complex in a small widget.
+                            // Simple fallback:
+                            return Text(
+                              '${attendees.length} members',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.6),
+                              ),
+                            );
+                          },
+                          loading: () => const SizedBox.shrink(),
+                          error: (_, __) => const SizedBox.shrink(),
+                        );
+                      },
                     )
                   else
-                    // Typing indicator or Online status
+                    // 1-on-1 Chat
                     Consumer(
                       builder: (context, ref, child) {
                         final typingAsync = ref.watch(
@@ -187,6 +247,54 @@ class ChatAppBar extends ConsumerWidget implements PreferredSizeWidget {
         ),
       ),
       actions: actions,
+    );
+  }
+
+  Widget _buildGroupStatusText(
+    BuildContext context,
+    WidgetRef ref,
+    List<String> userIds,
+    String action,
+  ) {
+    if (userIds.isEmpty) return const SizedBox.shrink();
+
+    // We only resolve the first name for brevity: "John and 2 others are typing..."
+    final firstUserId = userIds.first;
+    final userAsync = ref.watch(userProfileProvider(firstUserId));
+
+    return userAsync.when(
+      data: (doc) {
+        if (!doc.exists) return Text(action);
+        final data = doc.data() as Map<String, dynamic>;
+        final name = data['username'] ?? 'Member';
+
+        String text;
+        if (userIds.length == 1) {
+          text = '$name is $action';
+        } else if (userIds.length == 2) {
+          text = '$name and 1 other are $action';
+        } else {
+          text = '$name and ${userIds.length - 1} others are $action';
+        }
+
+        return Text(
+          text,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.primary,
+            fontStyle: FontStyle.italic,
+          ),
+        );
+      },
+      loading: () => Text(
+        'Members are $action',
+        style: TextStyle(
+          fontSize: 12,
+          color: Theme.of(context).colorScheme.primary,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 }

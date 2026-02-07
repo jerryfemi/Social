@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:social/providers/auth_provider.dart';
 import 'package:social/providers/chat_provider.dart';
+import 'package:social/widgets/chat_stats_linear.dart';
 import 'package:social/widgets/my_alert_dialog.dart';
-import 'package:social/widgets/user_tile.dart';
 
 class ChatProfileScreen extends ConsumerWidget {
   const ChatProfileScreen({super.key, required this.receiverId});
@@ -45,9 +45,63 @@ class ChatProfileScreen extends ConsumerWidget {
     );
   }
 
+  PopupMenuButton<String> showMenuOptions(BuildContext context, WidgetRef ref) {
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        switch (value) {
+          case 'block':
+            block(context, ref);
+            break;
+          case 'star':
+            final currentUserId = ref
+                .read(authServiceProvider)
+                .currentUser!
+                .uid;
+            final List<String> ids = [currentUserId, receiverId];
+            ids.sort();
+            final chatRoomId = ids.join('_');
+            context.push('/starred/$receiverId', extra: chatRoomId);
+            break;
+        }
+      },
+      itemBuilder: (context) {
+        return [
+          // block
+          const PopupMenuItem<String>(
+            value: 'block',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.block_outlined),
+                SizedBox(width: 8),
+                Text('Block'),
+              ],
+            ),
+          ),
+          const PopupMenuItem<String>(
+            value: 'star',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.star_border),
+                SizedBox(width: 8),
+                Text('Starred Messages'),
+              ],
+            ),
+          ),
+        ];
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final userStream = ref.watch(userProfileProvider(receiverId));
+    final currentUserId = ref.read(authServiceProvider).currentUser!.uid;
+    final chatRoomId = ref
+        .read(chatServiceProvider)
+        .getChatRoomId(currentUserId, receiverId);
+    final mediaAsync = ref.watch(chatMediaProvider(chatRoomId));
 
     return Scaffold(
       appBar: AppBar(
@@ -55,6 +109,7 @@ class ChatProfileScreen extends ConsumerWidget {
           'User Info',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
         ),
+        actions: [showMenuOptions(context, ref)],
       ),
       body: userStream.when(
         error: (error, stackTrace) => const Center(child: Text('Error:')),
@@ -64,7 +119,6 @@ class ChatProfileScreen extends ConsumerWidget {
           if (userData == null) return const Center(child: Text('No data'));
 
           final photoUrl = userData['profileImage'];
-          final uid = userData['uid'];
           final username = userData['username'];
           final about = userData['about'];
 
@@ -115,27 +169,137 @@ class ChatProfileScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 20),
                 Text(about, style: TextStyle(fontSize: 16)),
-                SizedBox(height: 70),
-                MyTile(
-                  title: 'Media',
-                  ontap: () {
-                    context.push('/chat_media/$receiverId');
+                SizedBox(height: 40),
+                // MEDIA SECTION
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 5,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'MEDIA',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () =>
+                            context.push('/chat_media/$receiverId'),
+                        icon: const Icon(Icons.arrow_forward_ios, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+                mediaAsync.when(
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
+                  error: (e, s) => const SizedBox(),
+                  data: (mediaDocs) {
+                    if (mediaDocs.isEmpty) {
+                      return Container(
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Center(
+                          child: Text(
+                            'No media shared',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.tertiary,
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    return SizedBox(
+                      height: 100,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: mediaDocs.length,
+                        itemBuilder: (context, index) {
+                          final data =
+                              mediaDocs[index].data() as Map<String, dynamic>;
+                          final isVideo = data['type'] == 'video';
+                          final url = isVideo
+                              ? data['thumbnailUrl'] as String?
+                              : data['message'] as String?;
+
+                          return GestureDetector(
+                            onTap: () {
+                              // Universal Media Viewer Logic
+                              final galleryItems = mediaDocs.map((doc) {
+                                final d = doc.data() as Map<String, dynamic>;
+                                return {
+                                  ...d,
+                                  'senderID': d['senderID'] ?? '',
+                                  'senderName': d['senderName'] ?? '',
+                                };
+                              }).toList();
+
+                              context.push(
+                                '/media_gallery',
+                                extra: {
+                                  'mediaMessages': galleryItems,
+                                  'initialIndex': index,
+                                },
+                              );
+                            },
+                            child: Container(
+                              width: 100,
+                              margin: const EdgeInsets.only(right: 8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(8),
+                                color: Theme.of(context).colorScheme.surface,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    if (url != null)
+                                      CachedNetworkImage(
+                                        imageUrl: url,
+                                        fit: BoxFit.cover,
+                                        placeholder: (_, __) =>
+                                            Container(color: Colors.grey[300]),
+                                        errorWidget: (_, __, ___) =>
+                                            const Icon(Icons.broken_image),
+                                      ),
+                                    if (isVideo)
+                                      const Center(
+                                        child: Icon(
+                                          Icons.play_arrow,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    );
                   },
                 ),
-                MyTile(
-                  title: 'Starred Messages',
-                  ontap: () {
-                    final currentUserId = ref
-                        .read(authServiceProvider)
-                        .currentUser!
-                        .uid;
-                    final List<String> ids = [currentUserId, receiverId];
-                    ids.sort();
-                    final chatRoomId = ids.join('_');
-                    context.push('/starred/$uid', extra: chatRoomId);
-                  },
+                const SizedBox(height: 30),
+                ChatStatsLinear(
+                  chatRoomId: ref
+                      .read(chatServiceProvider)
+                      .getChatRoomId(
+                        ref.read(authServiceProvider).currentUser!.uid,
+                        receiverId,
+                      ),
+                  receiverName: username,
                 ),
-                MyTile(title: 'Block', ontap: () => block(context, ref)),
               ],
             ),
           );

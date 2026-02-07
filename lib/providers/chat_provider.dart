@@ -63,7 +63,7 @@ final starredMessagesProvider = StreamProvider<QuerySnapshot>((ref) {
   return chatService.getStarredMessages();
 });
 
-// TYPING STATUS PROVIDER
+// TYPING STATUS PROVIDER (1-on-1)
 final typingStatusProvider = StreamProvider.family<bool, String>((
   ref,
   receiverId,
@@ -72,7 +72,14 @@ final typingStatusProvider = StreamProvider.family<bool, String>((
   return chatService.getTypingStatus(receiverId);
 });
 
-//RECORDING STATUS PROVIDER
+// GROUP TYPING PROVIDER
+final groupTypingStatusProvider =
+    StreamProvider.family<Map<String, dynamic>, String>((ref, groupId) {
+      final chatService = ref.watch(chatServiceProvider);
+      return chatService.getGroupTypingStatus(groupId);
+    });
+
+//RECORDING STATUS PROVIDER (1-on-1)
 final recordingStatusProvider = StreamProvider.family<bool, String>((
   ref,
   receiverId,
@@ -81,9 +88,62 @@ final recordingStatusProvider = StreamProvider.family<bool, String>((
   return chatService.getRecordingStatus(receiverId);
 });
 
+// GROUP RECORDING PROVIDER
+final groupRecordingStatusProvider =
+    StreamProvider.family<Map<String, dynamic>, String>((ref, groupId) {
+      final chatService = ref.watch(chatServiceProvider);
+      return chatService.getGroupRecordingStatus(groupId);
+    });
+
 // ONLINE STATUS PROVIDER
 final onlineStatusProvider =
     StreamProvider.family<Map<String, dynamic>, String>((ref, userId) {
       final chatService = ref.watch(chatServiceProvider);
       return chatService.getUserOnlineStatus(userId);
     });
+// 8. FULL MEDIA PROVIDERS (Cached for Media Screens)
+final chatMediaProvider =
+    StreamProvider.family<List<QueryDocumentSnapshot>, String>((
+      ref,
+      chatRoomId,
+    ) {
+      return FirebaseFirestore.instance
+          .collection('Chat_rooms')
+          .doc(chatRoomId)
+          .collection('Messages')
+          .orderBy('timestamp', descending: true)
+          .snapshots()
+          .map((snapshot) {
+            return snapshot.docs.where((doc) {
+              final type = doc.data()['type'] as String?;
+              return type == 'image' || type == 'video';
+            }).toList();
+          });
+    });
+
+final groupMediaProvider =
+    StreamProvider.family<List<QueryDocumentSnapshot>, String>((ref, groupId) {
+      return FirebaseFirestore.instance
+          .collection('Chat_rooms')
+          .doc(groupId)
+          .collection('Messages')
+          .orderBy('timestamp', descending: true)
+          .snapshots()
+          .map((snapshot) {
+            return snapshot.docs.where((doc) {
+              final type = doc.data()['type'] as String?;
+              return type == 'image' || type == 'video';
+            }).toList();
+          });
+    });
+
+/// Provider to get group info from Firestore
+final groupInfoProvider = StreamProvider.family<DocumentSnapshot, String>((
+  ref,
+  groupId,
+) {
+  return FirebaseFirestore.instance
+      .collection('Chat_rooms')
+      .doc(groupId)
+      .snapshots();
+});

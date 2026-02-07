@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:social/models/message_search_result.dart';
@@ -36,6 +37,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   final _hiveService = HiveService();
   bool isSelected = false;
   Set<String> selectedUserIds = {};
+  List<Map<String, dynamic>> selectedUsersData = [];
   final _syncService = SyncService();
   StreamSubscription? _deliverySubscription;
 
@@ -127,25 +129,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
   }
 
-  void _toggleSelection(String userId) {
+  void _toggleSelection(Map<String, dynamic> userData) {
     setState(() {
+      final userId = userData['uid'];
       if (selectedUserIds.contains(userId)) {
         selectedUserIds.remove(userId);
+        selectedUsersData.removeWhere((u) => u['uid'] == userId);
 
         if (selectedUserIds.isEmpty) {
           isSelected = false;
         }
       } else {
         selectedUserIds.add(userId);
+        selectedUsersData.add(userData);
       }
     });
   }
 
   // ENTER SELECTION MODE(onLongPress userTile)
-  void _enterSelectionMode(String userId) {
+  void _enterSelectionMode(Map<String, dynamic> userData) {
     setState(() {
       isSelected = true;
-      selectedUserIds.add(userId);
+      selectedUserIds.add(userData['uid']);
+      selectedUsersData.add(userData);
     });
   }
 
@@ -154,13 +160,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     setState(() {
       isSelected = false;
       selectedUserIds.clear();
+      selectedUsersData.clear();
     });
   }
 
   Future<void> _showNewChatSheet() async {
     await showModalBottomSheet(
       context: context,
-      builder: (context) => NewChatSheet(selectedUserIds: selectedUserIds),
+      builder: (context) => NewChatSheet(
+        selectedUserIds: selectedUserIds,
+        preSelectedUsers: selectedUsersData,
+      ),
       isScrollControlled: true,
       showDragHandle: true,
       useSafeArea: true,
@@ -267,77 +277,97 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         final bool isThisSelected = selectedUserIds.contains(userData['uid']);
         final bool isGroup = userData['isGroup'] == true;
 
+        final chatRoomId = userData['chatRoomId'] ?? userData['uid'];
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: UserTile(
-            text: userData['username'],
-            photourl: userData['profileImage'],
-            isGroup: isGroup,
-            onLongPress: isGroup
-                ? null
-                : () => _enterSelectionMode(userData['uid']),
+          child: Slidable(
+            key: ValueKey(chatRoomId),
+            closeOnScroll: true,
+            endActionPane: ActionPane(
+              motion: const ScrollMotion(),
+              // Removed DismissiblePane to prevent "dismissed widget still in tree" error
+              children: [
+                SlidableAction(
+                  onPressed: (context) =>
+                      _confirmDelete(context, chatRoomId, isGroup),
+                  autoClose: true,
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  icon: Icons.delete,
+                  label: 'Delete',
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ],
+            ),
+            child: UserTile(
+              text: userData['username'],
+              photourl: userData['profileImage'],
+              isGroup: isGroup,
+              onLongPress: isGroup ? null : () => _enterSelectionMode(userData),
 
-            // Show checkmark if selected, otherwise show time
-            trailing: isThisSelected
-                ? Icon(
-                    Icons.check_circle,
-                    color: Theme.of(context).colorScheme.primary,
-                  )
-                : (_searchQuery.isEmpty &&
-                      userData['lastMessageTimestamp'] != null)
-                ? Text(
-                    dateUtil.formatMessageTime(
-                      userData['lastMessageTimestamp'],
-                    ),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withValues(alpha: 0.6),
-                    ),
-                  )
-                : null,
+              // Show checkmark if selected, otherwise show time
+              trailing: isThisSelected
+                  ? Icon(
+                      Icons.check_circle,
+                      color: Theme.of(context).colorScheme.primary,
+                    )
+                  : (_searchQuery.isEmpty &&
+                        userData['lastMessageTimestamp'] != null)
+                  ? Text(
+                      dateUtil.formatMessageTime(
+                        userData['lastMessageTimestamp'],
+                      ),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    )
+                  : null,
 
-            // Show last message if in Recent chats
-            subtitle:
-                (_searchQuery.isEmpty &&
-                    userData['lastMessage'] != null &&
-                    userData['lastMessage'].isNotEmpty)
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (isMe && userData['lastMessageStatus'] != null)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: StatusIcon(
-                            syncStatus: null,
-                            status: userData['lastMessageStatus'],
+              // Show last message if in Recent chats
+              subtitle:
+                  (_searchQuery.isEmpty &&
+                      userData['lastMessage'] != null &&
+                      userData['lastMessage'].isNotEmpty)
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isMe && userData['lastMessageStatus'] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: StatusIcon(
+                              syncStatus: null,
+                              status: userData['lastMessageStatus'],
+                            ),
+                          ),
+
+                        Flexible(
+                          child: Text(
+                            userData['lastMessage'].toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-
-                      Flexible(
-                        child: Text(
-                          userData['lastMessage'].toString(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  )
-                : null,
-            onTap: () {
-              if (isSelected && !isGroup) {
-                _toggleSelection(userData['uid']);
-              } else {
-                context.push(
-                  '/chat/${userData['username']}/${userData['uid']}',
-                  extra: {
-                    'photoUrl': userData['profileImage'],
-                    'isGroup': isGroup,
-                  },
-                );
-              }
-            },
+                      ],
+                    )
+                  : null,
+              onTap: () {
+                if (isSelected && !isGroup) {
+                  _toggleSelection(userData);
+                } else {
+                  context.push(
+                    '/chat/${userData['username']}/${userData['uid']}',
+                    extra: {
+                      'photoUrl': userData['profileImage'],
+                      'isGroup': isGroup,
+                    },
+                  );
+                }
+              },
+            ),
           ),
         );
       }, childCount: dataList.length),
@@ -458,7 +488,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             Text(
               'Try a different search term',
               style: TextStyle(
-                color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.7),
+                color: Theme.of(
+                  context,
+                ).colorScheme.tertiary.withValues(alpha: 0.7),
                 fontSize: 14,
               ),
             ),
@@ -466,5 +498,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
       ),
     );
+  }
+
+  void _confirmDelete(BuildContext context, String chatId, bool isGroup) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isGroup ? 'Delete Group?' : 'Delete Chat?'),
+        content: Text(
+          isGroup
+              ? 'You will leave this group and it will be removed from your list.'
+              : 'This chat will be removed from your list.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _handleDelete(chatId, isGroup);
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleDelete(String chatId, bool isGroup) async {
+    try {
+      // Removing self from participants effectively "deletes" the chat from view
+      // For groups, this is equivalent to leaving.
+      await chatservice.deleteChat(chatId);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error deleting chat: $e')));
+      }
+    }
   }
 }
